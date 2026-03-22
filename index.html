@@ -688,7 +688,7 @@ function PPColModal({sec,onSave,onClose}){
       <div style={{marginBottom:14}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <label style={{fontSize:11,color:"#666666",fontWeight:600,letterSpacing:.5}}>COLUMNS <span style={{fontWeight:400,color:"#888888"}}>(drag ☰ to reorder)</span></label>
-          <button onClick={()=>setCols([...cols,{key:"col_"+uid(),label:"",type:"text",formula:""}])} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 10px",color:"#222222",cursor:"pointer",fontSize:12,fontWeight:600}}>+ Column</button>
+          <button onClick={()=>setCols([...cols,{key:"col_"+uid(),label:"",type:"text",formula:"",options:[]}])} style={{background:"transparent",border:"1px dashed #d8d8d8",borderRadius:6,padding:"4px 12px",color:"#222222",cursor:"pointer",fontSize:12,fontWeight:600,transition:"border-color .15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#222222"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d8d8d8"}>＋ Add Column</button>
         </div>
         {cols.map((c,i)=>(
           <div key={c.key} draggable onDragStart={()=>onDragStart(i)} onDragEnter={()=>onDragEnter(i)} onDragEnd={onDragEnd} onDragOver={e=>e.preventDefault()}
@@ -1554,7 +1554,7 @@ function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undo
 /* ─────────────────────────────────────────────
    PROJECT BUDGET PAGE  (Production Planning + Schedule)
 ───────────────────────────────────────────── */
-function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo,onBack,onOpenSchedule,onAddSchedule,onDeleteSchedule}){
+function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo,onBack,onOpenSchedule,onAddSchedule,onDeleteSchedule,onCloneSchedule,onPublishToggle}){
   const [activeTab,setActiveTab]=useState("pp"); // "pp" | "btl"
   const [confirm,setConfirm]=useState(null);
   const [toast,setToast]=useState(null);
@@ -1612,23 +1612,42 @@ function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,
               {project.schedules.map(sch=>{
                 const t=schedTotals(sch);
                 return(
-                  <div key={sch.id} className="card" style={{padding:18,transition:"border-color .15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#222222"} onMouseLeave={e=>e.currentTarget.style.borderColor="#e0e0e0"}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <div style={{fontWeight:700,color:"#111111",fontSize:14,cursor:"pointer"}} onClick={()=>onOpenSchedule&&onOpenSchedule(sch)}>{sch.name}</div>
-                      <button onClick={()=>onDeleteSchedule&&onDeleteSchedule(sch.id,sch.name)} style={{background:"none",border:"none",color:"#999999",cursor:"pointer",fontSize:18,lineHeight:1,padding:0}}>x</button>
+                  <div key={sch.id} className="card" style={{padding:18,transition:"border-color .15s",borderColor:sch.published?"#22222250":"#e0e0e0"}} onMouseEnter={e=>e.currentTarget.style.borderColor=sch.published?"#222222":"#22222240"} onMouseLeave={e=>e.currentTarget.style.borderColor=sch.published?"#22222250":"#e0e0e0"}>
+                    {/* Header: name + clone + delete */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:700,color:"#111111",fontSize:14,cursor:"pointer"}} onClick={()=>onOpenSchedule&&onOpenSchedule(sch)}>{sch.name}</div>
+                        <div style={{fontSize:11,color:"#666666",marginTop:2,display:"flex",alignItems:"center",gap:6}}>
+                          {(sch.dayOrder||[]).length} day(s)
+                          {sch.clonedFrom&&<span style={{background:"#c77d0a18",color:"#c77d0a",borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700}}>⎘ CLONE</span>}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:4,flexShrink:0,marginLeft:8}}>
+                        <button onClick={e=>{e.stopPropagation();onCloneSchedule&&onCloneSchedule(sch.id);}} title="Clone schedule" style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:6,color:"#c77d0a",cursor:"pointer",fontSize:13,padding:"3px 8px",fontWeight:700}} onMouseEnter={e=>e.currentTarget.style.borderColor="#c77d0a"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d8d8d8"}>⎘</button>
+                        <button onClick={e=>{e.stopPropagation();onDeleteSchedule&&onDeleteSchedule(sch.id,sch.name);}} style={{background:"none",border:"none",color:"#999999",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 4px"}} onMouseEnter={e=>e.target.style.color="#dc2626"} onMouseLeave={e=>e.target.style.color="#999999"}>×</button>
+                      </div>
                     </div>
-                    <div style={{fontSize:11,color:"#666666",marginBottom:10}}>{(sch.dayOrder||[]).length} day(s)</div>
-                    <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:11,color:"#666666",marginTop:8}}>
-                      <span>👥 {fmt(t.dailyTotal)}</span>
-                      <span>👗 {fmt(t.costumesTotal)}</span>
-                      <span>🏨 {fmt(t.tblTotal)}</span>
-                      <span>🚗 {fmt(t.vehiclesTotal)}</span>
+                    {/* Totals */}
+                    <div style={{display:"flex",flexWrap:"wrap",gap:10,fontSize:11,color:"#666666",marginBottom:10,paddingBottom:10,borderBottom:"1px solid #e0e0e0"}}>
+                      {[{l:"Crew",v:t.dailyTotal,c:"#2563eb"},{l:"Costumes",v:t.costumesTotal,c:"#db2777"},{l:"TBL",v:t.tblTotal,c:"#7c3aed"},{l:"Equip",v:t.equipTotal,c:"#222222"}].map((m,i)=><div key={i}><div style={{fontSize:9,color:"#666666",fontWeight:600,letterSpacing:.5}}>{m.l.toUpperCase()}</div><div style={{fontSize:13,fontWeight:700,color:m.c}}>{m.v?fmt(m.v):"—"}</div></div>)}
                     </div>
-                    <div style={{marginTop:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                      <span style={{fontSize:11,color:"#666666"}}>Total</span>
-                      <span style={{fontSize:14,fontWeight:800,color:"#222222"}}>{fmt(t.total)}</span>
+                    {/* Total row */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                      <span style={{fontSize:11,color:"#666666"}}>Schedule Total</span>
+                      <span style={{fontSize:14,fontWeight:800,color:"#222222"}}>{t.total?fmt(t.total):"—"}</span>
                     </div>
-                    <div onClick={()=>onOpenSchedule&&onOpenSchedule(sch)} style={{marginTop:12,background:"#f8f8f8",borderRadius:7,padding:"6px 10px",fontSize:12,color:"#222222",fontWeight:600,textAlign:"center",cursor:"pointer"}}>Open Schedule →</div>
+                    {/* Publish toggle */}
+                    <div onClick={e=>{e.stopPropagation();onPublishToggle&&onPublishToggle(sch.id,!sch.published);}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,background:sch.published?"#222222":"#f8f8f8",border:"2px solid "+(sch.published?"#222222":"#d8d8d8"),borderRadius:8,padding:"8px 12px",cursor:"pointer",transition:"all .2s"}}>
+                      <div>
+                        <div style={{fontSize:11,fontWeight:800,color:sch.published?"#ffffff":"#444444"}}>{sch.published?"✓ Published":"Draft"}</div>
+                        <div style={{fontSize:10,color:sch.published?"#ffffffaa":"#999999",marginTop:1}}>{sch.published?"Counted in budget total":"Click to include in total"}</div>
+                      </div>
+                      <div style={{width:38,height:20,borderRadius:10,background:sch.published?"#ffffff44":"#d8d8d8",position:"relative",flexShrink:0}}>
+                        <div style={{width:16,height:16,borderRadius:8,background:sch.published?"#ffffff":"#888888",position:"absolute",top:2,left:sch.published?20:2,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+                      </div>
+                    </div>
+                    {/* Open button */}
+                    <div onClick={()=>onOpenSchedule&&onOpenSchedule(sch)} style={{background:"#f8f8f8",borderRadius:7,padding:"7px 12px",fontSize:12,color:"#222222",fontWeight:600,textAlign:"center",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background="#e0e0e0"} onMouseLeave={e=>e.currentTarget.style.background="#f8f8f8"}>Open Schedule →</div>
                   </div>
                 );
               })}
@@ -2059,7 +2078,7 @@ function DailySectionEditModal({sec,onSave,onClose}){
       <div style={{marginBottom:14}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <label style={{fontSize:11,color:"#666666",fontWeight:600,letterSpacing:.5}}>COLUMNS</label>
-          <button onClick={()=>setCols([...cols,{key:"col_"+uid(),label:"",type:"text",formula:""}])} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 10px",color:"#222222",cursor:"pointer",fontSize:12,fontWeight:600}}>+ Column</button>
+          <button onClick={()=>setCols([...cols,{key:"col_"+uid(),label:"",type:"text",formula:"",options:[]}])} style={{background:"transparent",border:"1px dashed #d8d8d8",borderRadius:6,padding:"4px 12px",color:"#222222",cursor:"pointer",fontSize:12,fontWeight:600,transition:"border-color .15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#222222"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d8d8d8"}>＋ Add Column</button>
         </div>
         {cols.map((c,i)=>(
           <div key={c.key} style={{marginBottom:10,background:"#f8f8f8",borderRadius:10,padding:"10px 12px",border:"1px solid "+(c.type==="formula"?"#9878d440":"#d8d8d8")}}>
@@ -2115,7 +2134,7 @@ function ManageColumnsModal({cols,onSave,onClose,lockedKeys=[]}){
     const a=[...list];const [removed]=a.splice(drag,1);a.splice(dragOver,0,removed);
     setList(a);setDrag(null);setDragOver(null);
   };
-  const COL_TYPES_LOCAL=[{v:"text",l:"Text"},{v:"number",l:"Number"},{v:"currency",l:"Currency (₹)"},{v:"date",l:"Date"},{v:"select",l:"Dropdown"},{v:"formula",l:"Formula (auto)"}];
+  // Use global COL_TYPES (same as PPColModal)
   return(
     <Modal title="⚙ Manage Columns" onClose={onClose} width={560}>
       {err&&<div style={{background:"#e8655a20",border:"1px solid #e06f6f44",borderRadius:8,padding:"8px 14px",marginBottom:12,color:"#dc2626",fontSize:13}}>{err}</div>}
@@ -2123,6 +2142,7 @@ function ManageColumnsModal({cols,onSave,onClose,lockedKeys=[]}){
       <div style={{maxHeight:"52vh",overflowY:"auto",marginBottom:12}}>
         {list.map((c,i)=>{
           const locked=lockedKeys.includes(c.key);
+          const hasExtra=(c.type==="formula"||c.type==="dropdown"||c.type==="select")&&!locked;
           return(
             <div key={c.key}
               draggable={!locked}
@@ -2130,26 +2150,35 @@ function ManageColumnsModal({cols,onSave,onClose,lockedKeys=[]}){
               onDragEnter={()=>onDragEnter(i)}
               onDragEnd={onDragEnd}
               onDragOver={e=>e.preventDefault()}
-              style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,background:drag===i?"#f8f8f8":dragOver===i?"#eff6ff":"#f8f8f8",borderRadius:10,padding:"10px 12px",border:"1px solid "+(dragOver===i?"#222222":locked?"#d8d8d844":"#d8d8d8"),opacity:drag===i?0.5:1,transition:"background .1s",cursor:locked?"default":"grab"}}
+              style={{marginBottom:8,background:drag===i?"#f8f8f8":dragOver===i?"#eff6ff":"#f8f8f8",borderRadius:10,padding:"10px 12px",border:"1px solid "+(dragOver===i?"#222222":locked?"#d8d8d844":hasExtra?"#9878d440":"#d8d8d8"),opacity:drag===i?0.5:1,transition:"background .1s",cursor:locked?"default":"grab"}}
             >
-              {!locked&&<span style={{color:"#999999",fontSize:16,cursor:"grab",userSelect:"none",flexShrink:0}}>⠿</span>}
-              {locked&&<span style={{color:"#d8d8d8",fontSize:16,flexShrink:0}}>🔒</span>}
-              <input value={c.label} disabled={locked} onChange={e=>setList(list.map((x,j)=>j===i?{...x,label:e.target.value}:x))} style={{flex:2,background:locked?"#f8f8f8":"#f8f8f8",border:"1px solid "+(locked?"#e0e0e0":"#d8d8d8"),borderRadius:7,padding:"6px 10px",color:locked?"#888888":"#111111",fontSize:13,cursor:locked?"default":"text"}}/>
-              <select value={c.type||"text"} disabled={locked} onChange={e=>setList(list.map((x,j)=>j===i?{...x,type:e.target.value}:x))} style={{flex:1,background:"#f8f8f8",border:"1px solid "+(c.type==="formula"?"#7c3aed":c.type==="currency"?"#22222240":c.type==="number"?"#c77d0a44":"#d8d8d8"),borderRadius:7,padding:"6px 8px",color:"#111111",fontSize:12,cursor:locked?"default":"pointer"}}>
-                {COL_TYPES_LOCAL.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
-              </select>
-              {c.type==="formula"&&!locked&&<input value={c.formula||""} onChange={e=>setList(list.map((x,j)=>j===i?{...x,formula:e.target.value}:x))} placeholder="e.g. Units * Amount" style={{flex:2,background:"#f8f8f8",border:"1px solid #9b72cf55",borderRadius:7,padding:"6px 8px",color:"#7c3aed",fontSize:11,fontFamily:"monospace"}}/>}
-              {c.type==="select"&&!locked&&<input value={(c.options||[]).join(",")} onChange={e=>setList(list.map((x,j)=>j===i?{...x,options:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)}:x))} placeholder="opt1,opt2,opt3" style={{flex:2,background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:7,padding:"6px 8px",color:"#111111",fontSize:11}}/>}
-              <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
-                <button onClick={()=>moveUp(i)} disabled={i===0} style={{background:"none",border:"none",color:i===0?"#e0e0e0":"#666666",cursor:i===0?"default":"pointer",fontSize:11,padding:"1px 4px",lineHeight:1}}>▲</button>
-                <button onClick={()=>moveDown(i)} disabled={i===list.length-1} style={{background:"none",border:"none",color:i===list.length-1?"#e0e0e0":"#666666",cursor:i===list.length-1?"default":"pointer",fontSize:11,padding:"1px 4px",lineHeight:1}}>▼</button>
+              {/* Top row: drag + label input + type select + up/down + delete */}
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {!locked&&<span style={{color:"#999999",fontSize:16,cursor:"grab",userSelect:"none",flexShrink:0}}>⠿</span>}
+                {locked&&<span style={{color:"#d8d8d8",fontSize:16,flexShrink:0}}>🔒</span>}
+                <input value={c.label} disabled={locked} onChange={e=>setList(list.map((x,j)=>j===i?{...x,label:e.target.value}:x))} style={{flex:2,background:"#f8f8f8",border:"1px solid "+(locked?"#e0e0e0":"#d8d8d8"),borderRadius:7,padding:"6px 10px",color:locked?"#888888":"#111111",fontSize:13,cursor:locked?"default":"text"}}/>
+                <select value={c.type||"text"} disabled={locked} onChange={e=>{const t=e.target.value;setList(list.map((x,j)=>j===i?{...x,type:t,options:t==="dropdown"?(x.options||[]):x.options,formula:t==="formula"?(x.formula||""):x.formula}:x));}} style={{flex:1,background:"#f8f8f8",border:"1px solid "+(c.type==="formula"?"#7c3aed":c.type==="currency"?"#22222240":c.type==="number"?"#c77d0a44":c.type==="dropdown"?"#22222240":"#d8d8d8"),borderRadius:7,padding:"6px 8px",color:"#111111",fontSize:12,cursor:locked?"default":"pointer"}}>
+                  {COL_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+                </select>
+                <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
+                  <button onClick={()=>moveUp(i)} disabled={i===0} style={{background:"none",border:"none",color:i===0?"#e0e0e0":"#666666",cursor:i===0?"default":"pointer",fontSize:11,padding:"1px 4px",lineHeight:1}}>▲</button>
+                  <button onClick={()=>moveDown(i)} disabled={i===list.length-1} style={{background:"none",border:"none",color:i===list.length-1?"#e0e0e0":"#666666",cursor:i===list.length-1?"default":"pointer",fontSize:11,padding:"1px 4px",lineHeight:1}}>▼</button>
+                </div>
+                {!locked&&<button onClick={()=>{if(list.filter(x=>!lockedKeys.includes(x.key)).length>1)setList(list.filter((_,j)=>j!==i));}} style={{background:"none",border:"none",color:"#999999",cursor:"pointer",fontSize:18,padding:"0 2px",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.color="#dc2626"} onMouseLeave={e=>e.currentTarget.style.color="#999999"}>×</button>}
               </div>
-              {!locked&&<button onClick={()=>{if(list.filter(x=>!lockedKeys.includes(x.key)).length>1)setList(list.filter((_,j)=>j!==i));}} style={{background:"none",border:"none",color:"#999999",cursor:"pointer",fontSize:18,padding:"0 2px",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.color="#dc2626"} onMouseLeave={e=>e.currentTarget.style.color="#999999"}>×</button>}
+              {/* Below row: formula editor or dropdown options */}
+              {c.type==="formula"&&!locked&&<div style={{paddingLeft:28,marginTop:8}}>
+                <input value={c.formula||""} onChange={e=>setList(list.map((x,j)=>j===i?{...x,formula:e.target.value}:x))} placeholder="e.g. Units * Amount" style={{width:"100%",background:"#f8f8f8",border:"1px solid #9b72cf55",borderRadius:7,padding:"6px 10px",color:"#7c3aed",fontSize:12,fontFamily:"monospace"}}/>
+                <div style={{fontSize:10,color:"#666666",marginTop:3}}>Available: {list.filter(x=>x.key!==c.key&&x.type!=="formula").map(x=>x.label||"?").join(", ")}</div>
+              </div>}
+              {(c.type==="dropdown"||c.type==="select")&&!locked&&<div style={{paddingLeft:28,marginTop:8}}>
+                <DropdownOptionsEditor key={c.key+"_mc"} col={{...c,type:"dropdown"}} colIdx={i} cols={list} setCols={setList}/>
+              </div>}
             </div>
           );
         })}
       </div>
-      <button onClick={()=>setList([...list,{key:"col_"+Math.random().toString(36).slice(2,8),label:"",type:"text",formula:""}])} style={{width:"100%",background:"#e0e0e0",border:"1px dashed #3a4a5a",borderRadius:8,padding:"9px",color:"#222222",cursor:"pointer",fontSize:13,fontWeight:600,marginBottom:14}}>+ Add Column</button>
+      <button onClick={()=>setList([...list,{key:"col_"+Math.random().toString(36).slice(2,8),label:"",type:"text",formula:"",options:[]}])} style={{width:"100%",background:"transparent",border:"1px dashed #d8d8d8",borderRadius:8,padding:"10px",color:"#222222",cursor:"pointer",fontSize:13,fontWeight:600,marginBottom:14,transition:"border-color .15s"}} onMouseEnter={e=>e.currentTarget.style.borderColor="#222222"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d8d8d8"}>＋ Add Column</button>
       <SaveBtn onClick={save} label="Save Column Order"/>
     </Modal>
   );
@@ -2622,10 +2651,14 @@ function CustomModTab({mod,sch,pid,updateSchedule,undoKey,canUndo,containerRef})
           <EditableName name={mod.name} onSave={v=>updateSchedule(pid,sch.id,s=>({...s,customModules:s.customModules.map(m=>m.id===mod.id?{...m,name:v}:m)}))} style={{fontWeight:700,fontSize:16,color:"#111111"}}/>
           {numCols.length>0&&<span style={{color:"#222222",fontWeight:700,fontSize:14}}>{fmt(total)}</span>}
         </div>
-        <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>setEditColModal(true)} style={{background:"transparent",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#7c3aed",cursor:"pointer",fontSize:12,fontWeight:600}}>⚙ Manage Columns</button>
-          <ExportBtn getRows={()=>rows.map(r=>{const o={};cols.forEach(c=>{o[c.label]=r[c.key]||"";});return o;})} getHeaders={()=>cols.map(c=>c.label)} filename={mod.name.replace(/\s/g,"_")}/>
-          <ActBar canUndoVal={canUndo(UK)} onUndo={()=>{if(undoKey(UK))setToast("↩ Undo");}} onReset={()=>setConfirm(true)} onAdd={()=>{setForm({});setModal(true);}}/>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>undoKey(UK)} disabled={!canUndo(UK)} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:canUndo(UK)?"#c77d0a":"#d8d8d8",cursor:canUndo(UK)?"pointer":"not-allowed",fontSize:12,fontWeight:600}} title="Undo (Ctrl+Z)">↩ Undo</button>
+          <button onClick={()=>setModal(true)} style={{background:"#222222",color:"#ffffff",border:"none",borderRadius:8,padding:"7px 16px",fontWeight:700,cursor:"pointer",fontSize:13}}>+ Add</button>
+          <ThreeDotMenu items={[
+            {label:"⚙ Manage Columns",color:"#7c3aed",onClick:()=>setEditColModal(true)},
+            {label:"↓ Export CSV/XLSX",color:"#2563eb",onClick:()=>{const wb=XLSX.utils.book_new();const hdrs=cols.map(c=>c.label);const data=rows.map(r=>{const o={};cols.forEach(c=>{o[c.label]=r[c.key]||"";});return o;});const ws=data.length?XLSX.utils.json_to_sheet(data,{header:hdrs}):XLSX.utils.json_to_sheet([Object.fromEntries(hdrs.map(h=>[h,""]))],{header:hdrs});XLSX.utils.book_append_sheet(wb,ws,mod.name.slice(0,31));XLSX.writeFile(wb,mod.name.replace(/\s/g,"_")+".xlsx");setToast("↓ Exported");}},
+            {label:"↺ Reset All",color:"#dc2626",onClick:()=>setConfirm(true)},
+          ]}/>
         </div>
       </div>
       <div className="card" style={{overflow:"hidden"}}>
@@ -3567,7 +3600,7 @@ function App(){
     if(!proj){setView(null);return null;}
     return <>
       {confirmDel&&<Confirm message={confirmDel.msg} onYes={()=>{confirmDel.fn();setConfirmDel(null);}} onNo={()=>setConfirmDel(null)}/>}
-      <ProjectBudgetPage project={proj} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo} onBack={()=>setView(null)}
+      <ProjectBudgetPage project={proj} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo} onBack={()=>setView(null)} onCloneSchedule={(sid)=>cloneSchedule(proj.id,sid)} onPublishToggle={(sid,val)=>updateProject(proj.id,p=>({...p,schedules:p.schedules.map(s=>s.id===sid?{...s,published:val}:s)}))}
         onOpenSchedule={(sch)=>setView({type:"schedule",proj,sch})}
         onAddSchedule={()=>{setSchName("");setNewSchModal(proj.id);}}
         onDeleteSchedule={(sid,sname)=>setConfirmDel({msg:"Delete schedule "+sname+"?",fn:()=>deleteSchedule(proj.id,sid)})}/>
