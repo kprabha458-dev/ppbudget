@@ -201,6 +201,7 @@ function useStore(){
     catch{return EMPTY_STORE;}
   });
   const undoStacks=useRef({});
+  const redoStacks=useRef({});
 
   const persist=useCallback((next,logEntry)=>{
     setStore(next);
@@ -223,6 +224,7 @@ function useStore(){
         if(!undoStacks.current[undoKey])undoStacks.current[undoKey]=[];
         undoStacks.current[undoKey].push(prev);
         if(undoStacks.current[undoKey].length>30)undoStacks.current[undoKey].shift();
+        redoStacks.current[undoKey]=[];
       }
       const next={...prev,projects:prev.projects.map(p=>p.id===pid?updater(p):p)};
       try{localStorage.setItem("fbm3",JSON.stringify(next));}catch{}
@@ -237,6 +239,7 @@ function useStore(){
         if(!undoStacks.current[undoKey])undoStacks.current[undoKey]=[];
         undoStacks.current[undoKey].push(prev);
         if(undoStacks.current[undoKey].length>20)undoStacks.current[undoKey].shift();
+        redoStacks.current[undoKey]=[];
       }
       const next={...prev,projects:prev.projects.map(p=>{
         if(p.id!==pid)return p;
@@ -252,12 +255,30 @@ function useStore(){
     const stack=undoStacks.current[key]||[];
     if(!stack.length)return false;
     const prev=stack.pop();
-    setStore(prev);
+    setStore(cur=>{
+      if(!redoStacks.current[key])redoStacks.current[key]=[];
+      redoStacks.current[key].push(cur);
+      return prev;
+    });
     try{localStorage.setItem("fbm3",JSON.stringify(prev));}catch{}
     pushLog(makeLog("UNDO","Undo action"));
     return true;
   };
+  const redoKey=(key)=>{
+    const stack=redoStacks.current[key]||[];
+    if(!stack.length)return false;
+    const next=stack.pop();
+    setStore(cur=>{
+      if(!undoStacks.current[key])undoStacks.current[key]=[];
+      undoStacks.current[key].push(cur);
+      return next;
+    });
+    try{localStorage.setItem("fbm3",JSON.stringify(next));}catch{}
+    pushLog(makeLog("REDO","Redo action"));
+    return true;
+  };
   const canUndo=(key)=>!!(undoStacks.current[key]?.length);
+  const canRedo=(key)=>!!(redoStacks.current[key]?.length);
 
   const addProject=(name)=>{
     const p=makeProject(name);
@@ -324,7 +345,7 @@ function useStore(){
     saveBin(bin);
   };
 
-  return{store,persist,updateProject,updateProjectWithUndo,updateSchedule,undoKey,canUndo,addProject,deleteProject,addSchedule,deleteSchedule,cloneSchedule,restoreFromBin,deleteBinItem};
+  return{store,persist,updateProject,updateProjectWithUndo,updateSchedule,undoKey,canUndo,redoKey,canRedo,addProject,deleteProject,addSchedule,deleteSchedule,cloneSchedule,restoreFromBin,deleteBinItem};
 }
 
 /* ─────────────────────────────────────────────
@@ -418,7 +439,7 @@ function ppWorkingTotal(proj){
   const atlTot=(proj.atl||[]).reduce((s,r)=>s+r.amount,0);
   return atlTot+(proj.ppModules||[]).filter(m=>!m.excludeFromTotal).reduce((s,m)=>s+moduleWorking(m),0);
 }
-function ppTotal(proj){return ppAssumedTotal(proj);}
+function ppTotal(proj){return ppWorkingTotal(proj);}
 // ATL total for a project
 function atlTotal(proj){return(proj.atl||[]).reduce((s,r)=>s+r.amount,0);}
 // BTL remaining = PP total (no fixed budget cap)
@@ -719,7 +740,7 @@ function PPColModal({sec,onSave,onClose}){
 // Global ref for tracking active undo key (for Ctrl+Z)
 const _activeUndoKey={current:null};
 
-function PPSectionPanel({sec,mod,project,updateProject,updateProjectWithUndo,undoKey,canUndo}){
+function PPSectionPanel({sec,mod,project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo}){
   const cols=sec.columns||[];
   const rows=sec.rows||[];
   const af=sec.assumedField||sec.totalField||"";
@@ -870,7 +891,7 @@ function PPSectionPanel({sec,mod,project,updateProject,updateProjectWithUndo,und
           <button onClick={()=>setFilterOpen(f=>!f)} title="Filter rows" style={{background:hasFilters?"#22222218":"none",border:"1px solid "+(hasFilters?"#22222240":"#d8d8d8"),borderRadius:5,padding:"3px 7px",color:hasFilters?"#222222":"#666666",cursor:"pointer",fontSize:11,fontWeight:600}}>{hasFilters?"Filter ×":"Filter"}</button>
           {/* Mass update */}
           {selected.size>0&&<button onClick={()=>setMassUpdateOpen(true)} style={{background:"#9878d420",border:"1px solid #9b72cf55",borderRadius:5,padding:"3px 7px",color:"#7c3aed",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>Update {selected.size}</button>}
-          <button onClick={()=>undoKey(UK)} disabled={!canUndo(UK)} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:5,padding:"3px 7px",color:canUndo(UK)?"#c77d0a":"#d8d8d8",cursor:canUndo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600}}>Undo</button>
+          <button onClick={()=>undoKey(UK)} disabled={!canUndo(UK)} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:5,padding:"3px 7px",color:canUndo(UK)?"#c77d0a":"#d8d8d8",cursor:canUndo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600}} title="Undo (Ctrl+Z / Cmd+Z)">↩ Undo</button><button onClick={()=>redoKey(UK)} disabled={!canRedo(UK)} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:5,padding:"3px 7px",color:canRedo(UK)?"#2563eb":"#d8d8d8",cursor:canRedo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600,marginLeft:4}} title="Redo (Ctrl+Y / Cmd+Shift+Z)">↪ Redo</button>
           <button onClick={()=>setConfirm({msg:`Reset all rows in "${sec.name}"?`,fn:resetSection})} disabled={rows.length===0} style={{background:"none",border:"1px solid #e06f6f33",borderRadius:5,padding:"3px 7px",color:rows.length?"#dc2626":"#d8d8d8",cursor:rows.length?"pointer":"not-allowed",fontSize:11,fontWeight:600}}>Reset</button>
           <button onClick={addRowEnd} style={{background:"#22222212",border:"1px solid #22222244",borderRadius:5,padding:"3px 8px",color:"#222222",cursor:"pointer",fontSize:11,fontWeight:700}}>+ Add</button>
           <ThreeDotMenu items={menuItems}/>
@@ -949,7 +970,7 @@ function PPSectionPanel({sec,mod,project,updateProject,updateProjectWithUndo,und
 /* ─────────────────────────────────────────────
    PP MODULE PANEL  (sections list + add section)
 ───────────────────────────────────────────── */
-function PPModulePanel({mod,project,updateProject,updateProjectWithUndo,undoKey,canUndo}){
+function PPModulePanel({mod,project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo}){
   const [addSecModal,setAddSecModal]=useState(false);
   const [confirm,setConfirm]=useState(null);
   const aTotal=moduleAssumed(mod);
@@ -982,7 +1003,7 @@ function PPModulePanel({mod,project,updateProject,updateProjectWithUndo,undoKey,
             <div style={{fontSize:24,marginBottom:8}}>📋</div>
             No sections yet — click <span style={{color:"#222222",fontWeight:700}}>＋ Add Section</span>
           </div>
-          :mod.sections.map(sec=><PPSectionPanel key={sec.id} sec={sec} mod={mod} project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo}/>)
+          :mod.sections.map(sec=><PPSectionPanel key={sec.id} sec={sec} mod={mod} project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo}/>)
         }
       </div>
       {addSecModal&&<PPColModal sec={{}} onSave={(name,cols,af,wf)=>{addSection(name,cols,af,wf);setAddSecModal(false);}} onClose={()=>setAddSecModal(false)}/>}
@@ -993,7 +1014,7 @@ function PPModulePanel({mod,project,updateProject,updateProjectWithUndo,undoKey,
 /* ─────────────────────────────────────────────
    ATL TABLE (special module for PP sidebar)
 ───────────────────────────────────────────── */
-function ATLTable({project,updateProject,updateProjectWithUndo,undoKey,canUndo}){
+function ATLTable({project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo}){
   const atl=project.atl||[];
   const atlTot=atlTotal(project);
   const UK=project.id+"_atl";
@@ -1036,7 +1057,7 @@ function ATLTable({project,updateProject,updateProjectWithUndo,undoKey,canUndo})
           <div style={{fontSize:12,color:"#c77d0a",fontWeight:600,marginTop:4}}>Total: {fmt(atlTot)}</div>
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <button onClick={()=>undoKey(UK)} disabled={!canUndo(UK)} style={{background:"#e0e0e0",border:"1px solid #d8d8d8",borderRadius:7,padding:"5px 10px",color:canUndo(UK)?"#c77d0a":"#999999",cursor:canUndo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600}}>↩ Undo</button>
+          <button onClick={()=>undoKey(UK)} disabled={!canUndo(UK)} style={{background:"#e0e0e0",border:"1px solid #d8d8d8",borderRadius:7,padding:"5px 10px",color:canUndo(UK)?"#c77d0a":"#999999",cursor:canUndo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600}} title="Undo (Ctrl+Z / Cmd+Z)">↩ Undo</button><button onClick={()=>redoKey(UK)} disabled={!canRedo(UK)} style={{background:"#e0e0e0",border:"1px solid #d8d8d8",borderRadius:7,padding:"5px 10px",color:canRedo(UK)?"#2563eb":"#999999",cursor:canRedo(UK)?"pointer":"not-allowed",fontSize:11,fontWeight:600,marginLeft:4}} title="Redo (Ctrl+Y / Cmd+Shift+Z)">↪ Redo</button>
           <button onClick={()=>setConfirm({msg:"Reset all ATL entries?",fn:resetATL})} disabled={atl.length===0} style={{background:"#e0e0e0",border:"1px solid #e06f6f44",borderRadius:7,padding:"5px 10px",color:atl.length?"#dc2626":"#999999",cursor:atl.length?"pointer":"not-allowed",fontSize:11,fontWeight:600}}>⊗ Reset</button>
           <button onClick={()=>setModal(true)} style={{background:"#c77d0a18",border:"1px solid #c77d0a55",borderRadius:7,padding:"5px 14px",color:"#c77d0a",cursor:"pointer",fontSize:12,fontWeight:700}}>＋ Add Row</button>
           <ThreeDotMenu items={menuItems}/>
@@ -1313,7 +1334,7 @@ function PPImportModal({project,updateProject,onClose,onDone}){
 /* ─────────────────────────────────────────────
    PRODUCTION PLANNING TAB  (sidebar layout)
 ───────────────────────────────────────────── */
-function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undoKey,canUndo}){
+function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo}){
   const [activeModule,setActiveModule]=useState("atl");
   const [addModModal,setAddModModal]=useState(false);
   const [newModName,setNewModName]=useState("");
@@ -1508,9 +1529,9 @@ function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undo
         {/* Main content */}
         <div className="pp-content" style={{flex:1,padding:"18px 22px",overflowY:"auto",display:"flex",flexDirection:"column",minWidth:0}}>
           {activeModule==="atl"
-            ?<ATLTable project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo}/>
+            ?<ATLTable project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo}/>
             :activeModData
-              ?<PPModulePanel key={activeModData.id} mod={activeModData} project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo}/>
+              ?<PPModulePanel key={activeModData.id} mod={activeModData} project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo}/>
               :<div style={{color:"#999999",fontSize:14,textAlign:"center",paddingTop:60}}>Select a module from the left</div>
           }
         </div>
@@ -1533,7 +1554,7 @@ function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undo
 /* ─────────────────────────────────────────────
    PROJECT BUDGET PAGE  (Production Planning + Schedule)
 ───────────────────────────────────────────── */
-function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,canUndo,onBack,onOpenSchedule,onAddSchedule,onDeleteSchedule}){
+function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,canUndo,redoKey,canRedo,onBack,onOpenSchedule,onAddSchedule,onDeleteSchedule}){
   const [activeTab,setActiveTab]=useState("pp"); // "pp" | "btl"
   const [confirm,setConfirm]=useState(null);
   const [toast,setToast]=useState(null);
@@ -1572,7 +1593,7 @@ function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,
       <div style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
         {activeTab==="pp"&&(
           <div style={{flex:1,display:"flex",flexDirection:"column",padding:"20px 24px",minHeight:0}}>
-            <ProductionPlanningTab project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo}/>
+            <ProductionPlanningTab project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo}/>
           </div>
         )}
 
@@ -3166,11 +3187,14 @@ function ScheduleViewer({project,sch,updateSchedule,undoKey,canUndo,onBack,store
       <div style={{width:215,flexShrink:0,background:"#f2f2f2",borderRight:"1px solid #f0f4f8",display:"flex",flexDirection:"column",overflow:"hidden"}}>
         <div style={{padding:"12px 14px",borderBottom:"1px solid #f0f4f8"}}>
           <button onClick={onBack} style={{background:"none",border:"none",color:"#666666",cursor:"pointer",fontSize:12,fontWeight:600,marginBottom:10,display:"flex",alignItems:"center",gap:5}}>← Project</button>
-          <div onClick={togglePublish} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",background:sch.published?"#22222211":"#f8f8f8",border:"1px solid "+(sch.published?"#22222250":"#d8d8d8"),borderRadius:8,padding:"6px 12px",marginBottom:10}}>
-            <div style={{width:32,height:18,borderRadius:9,background:sch.published?"#222222":"#d8d8d8",position:"relative",transition:"background .2s",flexShrink:0}}>
-              <div style={{width:14,height:14,borderRadius:7,background:"#fff",position:"absolute",top:2,left:sch.published?16:2,transition:"left .2s"}}/>
+          <div onClick={togglePublish} title={sch.published?"Click to unpublish":"Click to publish — includes in budget total"} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",background:sch.published?"#222222":"#ffffff",border:"2px solid "+(sch.published?"#222222":"#d8d8d8"),borderRadius:10,padding:"8px 14px",marginBottom:10,transition:"all .2s"}}>
+            <div style={{width:36,height:20,borderRadius:10,background:sch.published?"#ffffff44":"#d8d8d8",position:"relative",transition:"background .2s",flexShrink:0}}>
+              <div style={{width:16,height:16,borderRadius:8,background:sch.published?"#ffffff":"#888888",position:"absolute",top:2,left:sch.published?18:2,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
             </div>
-            <span style={{fontSize:11,fontWeight:700,color:sch.published?"#222222":"#666666"}}>{sch.published?"✓ Published":"Draft"}</span>
+            <div>
+              <div style={{fontSize:12,fontWeight:800,color:sch.published?"#ffffff":"#444444",lineHeight:1}}>{sch.published?"✓ Published":"Draft"}</div>
+              <div style={{fontSize:10,color:sch.published?"#ffffffaa":"#999999",marginTop:2}}>{sch.published?"Included in budget total":"Click to include in total"}</div>
+            </div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:32,height:32,background:"linear-gradient(135deg,#222222,#5dba72)",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>🎬</div>
@@ -3473,57 +3497,7 @@ function ProjectHome({store,addProject,deleteProject,addSchedule,deleteSchedule,
                 <div style={{flex:1,minWidth:150}}><BudgetBar label="" used={atlTot2+spent} total={ppTot2} color="#222222"/></div>
               </div>}
 
-              {/* Schedules grid */}
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))",gap:12}}>
-                {proj.schedules.map(sch=>{
-                  const t=schedTotals(sch);
-                  return(
-                    <div key={sch.id} className="card" style={{padding:18,transition:"border-color .2s",borderColor:sch.published?"#22222250":"#e0e0e0"}} onMouseEnter={e=>e.currentTarget.style.borderColor=sch.published?"#222222":"#22222240"} onMouseLeave={e=>e.currentTarget.style.borderColor=sch.published?"#22222250":"#e0e0e0"}>
-                      {/* Header row: name + clone + delete */}
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-                        <div style={{flex:1,minWidth:0}}>
-                          <EditableName name={sch.name} onSave={v=>updateProject(proj.id,p=>({...p,schedules:p.schedules.map(s=>s.id===sch.id?{...s,name:v}:s)}))} style={{fontWeight:700,color:"#111111",fontSize:14}}/>
-                          <div style={{fontSize:11,color:"#666666",marginTop:2,display:"flex",alignItems:"center",gap:6}}>
-                            {(sch.dayOrder||[]).length} day(s)
-                            {sch.clonedFrom&&<span style={{background:"#c77d0a18",color:"#c77d0a",borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700}}>⎘ CLONE</span>}
-                          </div>
-                        </div>
-                        <div style={{display:"flex",gap:4,flexShrink:0,marginLeft:8}}>
-                          <button onClick={e=>{e.stopPropagation();cloneSchedule(proj.id,sch.id);}} title="Clone this schedule" style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:6,color:"#c77d0a",cursor:"pointer",fontSize:13,padding:"3px 8px",fontWeight:700}} onMouseEnter={e=>e.currentTarget.style.borderColor="#c77d0a"} onMouseLeave={e=>e.currentTarget.style.borderColor="#d8d8d8"}>⎘</button>
-                          <button onClick={e=>{e.stopPropagation();setConfirm({msg:'Delete schedule "'+sch.name+'"?',fn:()=>deleteSchedule(proj.id,sch.id)});}} style={{background:"none",border:"none",color:"#999999",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 4px"}} onMouseEnter={e=>e.target.style.color="#dc2626"} onMouseLeave={e=>e.target.style.color="#999999"}>×</button>
-                        </div>
-                      </div>
-                      {/* Mini totals */}
-                      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:10,paddingBottom:10,borderBottom:"1px solid #e0e0e0"}}>
-                        {[{l:"Crew",v:t.dailyTotal,c:"#2563eb"},{l:"Costumes",v:t.costumesTotal,c:"#db2777"},{l:"TBL",v:t.tblTotal,c:"#7c3aed"},{l:"Equip",v:t.equipTotal,c:"#222222"}].map((m,i)=><div key={i}><div style={{fontSize:9,color:"#666666",fontWeight:600,letterSpacing:.5}}>{m.l.toUpperCase()}</div><div style={{fontSize:13,fontWeight:700,color:m.c}}>{m.v?fmt(m.v):"—"}</div></div>)}
-                      </div>
-                      {/* Grand total row */}
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                        <span style={{fontSize:12,color:"#666666"}}>Schedule Total</span>
-                        <span style={{fontSize:15,fontWeight:800,color:"#222222"}}>{t.total?fmt(t.total):"—"}</span>
-                      </div>
-                      {/* Publish toggle */}
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,background:sch.published?"#22222211":"#f8f8f8",borderRadius:8,padding:"8px 12px",border:"1px solid "+(sch.published?"#22222222":"#d8d8d8")}}>
-                        <div>
-                          <div style={{fontSize:11,fontWeight:700,color:sch.published?"#222222":"#666666"}}>
-                            {sch.published?"✓ Published":"Draft"}
-                          </div>
-                          <div style={{fontSize:10,color:"#888888",marginTop:1}}>
-                            {sch.published?"Counted in budget dashboard":"Enable to include in spent total"}
-                          </div>
-                        </div>
-                        <div onClick={e=>{e.stopPropagation();updateProject(proj.id,p=>({...p,schedules:p.schedules.map(s=>s.id===sch.id?{...s,published:!s.published}:s)}));}} style={{cursor:"pointer"}}>
-                          <div style={{width:40,height:22,borderRadius:11,background:sch.published?"#222222":"#d8d8d8",position:"relative",transition:"background .2s",flexShrink:0}}>
-                            <div style={{width:18,height:18,borderRadius:9,background:"#fff",position:"absolute",top:2,left:sch.published?20:2,transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,0.4)"}}/>
-                          </div>
-                        </div>
-                      </div>
-                      {/* Open button */}
-                      <div onClick={()=>onOpenSchedule(proj,sch)} style={{background:"#f8f8f8",borderRadius:7,padding:"7px 12px",fontSize:12,color:"#222222",fontWeight:600,textAlign:"center",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background="#e0e0e0"} onMouseLeave={e=>e.currentTarget.style.background="#f8f8f8"}>Open Schedule →</div>
-                    </div>
-                  );
-                })}
-              </div>
+
             </div>
           );
         })}
@@ -3535,7 +3509,7 @@ function ProjectHome({store,addProject,deleteProject,addSchedule,deleteSchedule,
 
       {newProjModal&&<Modal title="New Project" onClose={()=>setNewProjModal(false)} width={440}>
         <p style={{fontSize:13,color:"#666666",marginBottom:16,lineHeight:1.7}}>Create a project, then set up Production Planning sections and BTL schedules.</p>
-        <FInput label="Project Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Makkal Kaavalan" autoFocus onEnter={()=>{if(form.name.trim()){addProject(form.name);setNewProjModal(false);}}}/>
+        <FInput label="Project Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Nayakan" autoFocus onEnter={()=>{if(form.name.trim()){addProject(form.name);setNewProjModal(false);}}}/>
         <SaveBtn onClick={()=>{if(form.name.trim()){addProject(form.name);setNewProjModal(false);}}} label="Create Project" disabled={!form.name.trim()}/>
       </Modal>}
 
@@ -3552,7 +3526,7 @@ function ProjectHome({store,addProject,deleteProject,addSchedule,deleteSchedule,
    ROOT APP
 ───────────────────────────────────────────── */
 function App(){
-  const {store,updateProject,updateProjectWithUndo,updateSchedule,undoKey,canUndo,addProject,deleteProject,addSchedule,deleteSchedule,cloneSchedule,restoreFromBin,deleteBinItem}=useStore();
+  const {store,updateProject,updateProjectWithUndo,updateSchedule,undoKey,canUndo,redoKey,canRedo,addProject,deleteProject,addSchedule,deleteSchedule,cloneSchedule,restoreFromBin,deleteBinItem}=useStore();
   const [confirmDel,setConfirmDel]=useState(null);
   // view: null=home, {type:"budget",proj}, {type:"schedule",proj,sch}
   const [view,setView]=useState(null);
@@ -3566,17 +3540,23 @@ function App(){
       const isInput=tag==="input"||tag==="textarea"||tag==="select";
       // Only intercept undo/redo when NOT focused on a text input (let browser handle copy/paste)
       if((e.ctrlKey||e.metaKey)&&e.key==="z"&&!e.shiftKey){
-        if(isInput)return; // let the input handle it
-        // Try to undo the last active PP section or ATL
+        if(isInput)return;
         if(_activeUndoKey.current&&canUndo(_activeUndoKey.current)){
           e.preventDefault();
           undoKey(_activeUndoKey.current);
         }
       }
+      if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.key==="z"&&e.shiftKey))){
+        if(isInput)return;
+        e.preventDefault();
+        if(_activeUndoKey.current&&canRedo(_activeUndoKey.current)){
+          redoKey(_activeUndoKey.current);
+        }
+      }
     };
     window.addEventListener("keydown",handler);
     return()=>window.removeEventListener("keydown",handler);
-  },[undoKey,canUndo]);
+  },[undoKey,canUndo,redoKey,canRedo]);
 
   // Keep live references
   const liveProj=(pid)=>store.projects.find(p=>p.id===pid);
@@ -3587,7 +3567,7 @@ function App(){
     if(!proj){setView(null);return null;}
     return <>
       {confirmDel&&<Confirm message={confirmDel.msg} onYes={()=>{confirmDel.fn();setConfirmDel(null);}} onNo={()=>setConfirmDel(null)}/>}
-      <ProjectBudgetPage project={proj} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} onBack={()=>setView(null)}
+      <ProjectBudgetPage project={proj} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo} onBack={()=>setView(null)}
         onOpenSchedule={(sch)=>setView({type:"schedule",proj,sch})}
         onAddSchedule={()=>{setSchName("");setNewSchModal(proj.id);}}
         onDeleteSchedule={(sid,sname)=>setConfirmDel({msg:"Delete schedule "+sname+"?",fn:()=>deleteSchedule(proj.id,sid)})}/>
