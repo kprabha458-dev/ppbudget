@@ -1528,6 +1528,12 @@ function ProductionPlanningTab({project,updateProject,updateProjectWithUndo,undo
 
         {/* Main content */}
         <div className="pp-content" style={{flex:1,padding:"18px 22px",overflowY:"auto",display:"flex",flexDirection:"column",minWidth:0}}>
+          {/* Breadcrumb */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,color:"#999999",fontWeight:500}}>Production Planning</span>
+            <span style={{fontSize:11,color:"#cccccc"}}>›</span>
+            <span style={{fontSize:11,color:activeModule==="atl"?"#c77d0a":"#222222",fontWeight:700,cursor:"default"}}>{activeModule==="atl"?"ATL":(activeModData?.name||"—")}</span>
+          </div>
           {activeModule==="atl"
             ?<ATLTable project={project} updateProject={updateProject} updateProjectWithUndo={updateProjectWithUndo} undoKey={undoKey} canUndo={canUndo} redoKey={redoKey} canRedo={canRedo}/>
             :activeModData
@@ -1571,14 +1577,13 @@ function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden"}}>
       {/* Topbar */}
-      <div style={{background:"#f2f2f2",borderBottom:"1px solid #f0f4f8",padding:"12px 28px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <button onClick={onBack} style={{background:"none",border:"none",color:"#666666",cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>← Projects</button>
-          <div style={{width:1,height:20,background:"#e0e0e0"}}/>
-          <div>
-            <EditableName name={project.name} onSave={v=>updateProject(project.id,p=>({...p,name:v}))} style={{fontWeight:800,fontSize:15,color:"#111111"}}/>
-            <div style={{fontSize:10,color:"#666666",marginTop:1}}>Project Overview</div>
-          </div>
+      <div style={{background:"#f2f2f2",borderBottom:"1px solid #f0f4f8",padding:"10px 28px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+          <span onClick={onBack} style={{fontSize:12,color:"#2563eb",fontWeight:600,cursor:"pointer",padding:"3px 7px",borderRadius:5,transition:"background .1s"}} onMouseEnter={e=>e.currentTarget.style.background="#e0e8ff"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>Projects</span>
+          <span style={{fontSize:13,color:"#cccccc",fontWeight:400}}>›</span>
+          <span style={{fontSize:13,fontWeight:800,color:"#111111",padding:"3px 7px"}}>{project.name}</span>
+          <span style={{fontSize:13,color:"#cccccc",fontWeight:400}}>›</span>
+          <span style={{fontSize:12,fontWeight:700,color:"#444444",padding:"3px 7px",background:"#e8e8e8",borderRadius:5}}>{activeTab==="pp"?"📋 Production Planning":"🎬 Schedule"}</span>
         </div>
         <div style={{display:"flex",gap:8}}>
           {activeTab==="btl"&&<button onClick={()=>setShowBankSettings(true)} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:16,color:"#666666",lineHeight:1}} title="Bank Details Settings">⚙</button>}
@@ -1586,7 +1591,7 @@ function ProjectBudgetPage({project,updateProject,updateProjectWithUndo,undoKey,
       </div>
 
       {/* Tabs */}
-      <div style={{background:"#f2f2f2",borderBottom:"1px solid #f0f4f8",padding:"10px 28px",display:"flex",gap:8,flexShrink:0}}>
+      <div style={{background:"#f2f2f2",borderBottom:"1px solid #f0f4f8",padding:"8px 28px",display:"flex",gap:8,flexShrink:0}}>
         <TabBtn id="pp" label="Production Planning" icon="📋"/>
         <TabBtn id="btl" label="Schedule" icon="🎬"/>
       </div>
@@ -3129,6 +3134,45 @@ function DynamicModTab({sch,pid,updateSchedule,undoKey,canUndo,containerRef,modK
 /* ─────────────────────────────────────────────
    REPORT ROW — top-level to prevent remount on parent re-render
 ───────────────────────────────────────────── */
+/* ─────────────────────────────────────────────
+   SET REPORT — SUMMARY WIDGETS (4 widgets)
+───────────────────────────────────────────── */
+function SetReportSummary({rows,pendingEdits,selectedMod,selectedDay,selectedModLabel}){
+  const W=({title,value,color,bg,border,sub})=>(
+    <div style={{background:bg||"#ffffff",border:"1px solid "+(border||"#e0e0e0"),borderRadius:10,padding:"14px 20px",minWidth:150,flex:1}}>
+      <div style={{fontSize:10,fontWeight:700,color:"#888888",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>{title}</div>
+      <div style={{fontSize:22,fontWeight:800,color:color||"#111111",letterSpacing:-0.5,lineHeight:1.1}}>{value}</div>
+      {sub&&<div style={{fontSize:10,color:"#aaaaaa",marginTop:5}}>{sub}</div>}
+    </div>
+  );
+
+  const label=selectedMod==="daily"&&selectedDay!=="all"?selectedDay:selectedModLabel;
+
+  // Compute from rows + pendingEdits (lifted state — always accurate)
+  const grandTotal=rows.reduce((s,row,ri)=>{
+    return s+(row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((a,c)=>a+(c._isCurrency?c._total:0),0));
+  },0);
+
+  const pendingTotal=rows.reduce((s,_,ri)=>s+(parseFloat(pendingEdits[ri])||0),0);
+
+  // OB = per-row (rowTotal - pending); negative ones = OB Total, positive = Savings
+  let obNeg=0, obPos=0;
+  rows.forEach((row,ri)=>{
+    const rt=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((a,c)=>a+(c._isCurrency?c._total:0),0);
+    const ob=rt-(parseFloat(pendingEdits[ri])||0);
+    if(ob<0) obNeg+=ob; else obPos+=ob;
+  });
+
+  return(
+    <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+      <W title={label+" · Total"} value={fmt(grandTotal)} color="#111111" bg="#f8f8f8" border="#e0e0e0" sub="Grand total of all rows"/>
+      <W title="Pending Billing" value={fmt(pendingTotal)} color="#c77d0a" bg="#fffbee" border="#c77d0a44" sub="Sum of pending billing"/>
+      <W title="OB Total" value={"−"+fmt(Math.abs(obNeg))} color="#dc2626" bg="#fff5f5" border="#dc262644" sub="Over-billed rows"/>
+      <W title="Savings Total" value={fmt(obPos)} color="#16a34a" bg="#f0fdf4" border="#16a34a44" sub="Under-billed rows"/>
+    </div>
+  );
+}
+
 function SetReportTab({sch,project}){
   const mnames=sch.moduleNames||{};
   const bankDetails=project.bankDetails||[];
@@ -3136,6 +3180,7 @@ function SetReportTab({sch,project}){
   const [selectedDay,setSelectedDay]=useState("all");
   const [showFilter,setShowFilter]=useState(false);
   const [filterVals,setFilterVals]=useState({});
+  const [pendingEdits,setPendingEdits]=useState({}); // {ri: stringValue} — lifted from rows
   const rowRefs=useRef({}); // {ri: {setSent, getSent, setSelected, getSelected}}
   const [bulkTick,setBulkTick]=useState(0); // force re-render for select-all checkbox
 
@@ -3213,7 +3258,7 @@ function SetReportTab({sch,project}){
           <div style={{fontSize:12,color:"#666666"}}>Pending Billing is editable · OB/Savings = Total − Pending Billing</div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setSelectedDay("all");setFilterVals({});rowRefs.current={};}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setSelectedDay("all");setFilterVals({});setPendingEdits({});rowRefs.current={};}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
             {allMods.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
           <button onClick={()=>setShowFilter(f=>!f)} style={{background:showFilter?"#22222218":"#f8f8f8",border:"1px solid "+(showFilter?"#222":"#d8d8d8"),borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#222"}}>⌕ Filter</button>
@@ -3240,14 +3285,17 @@ function SetReportTab({sch,project}){
       {selectedMod==="daily"&&(
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:11,fontWeight:700,color:"#666"}}>Show:</span>
-          <button onClick={()=>setSelectedDay("all")} style={{background:selectedDay==="all"?"#222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
-          {days.map(d=><button key={d} onClick={()=>setSelectedDay(d)} style={{background:selectedDay===d?"#222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
+          <button onClick={()=>{setSelectedDay("all");setPendingEdits({});}} style={{background:selectedDay==="all"?"#222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
+          {days.map(d=><button key={d} onClick={()=>{setSelectedDay(d);setPendingEdits({});}} style={{background:selectedDay===d?"#222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
         </div>
       )}
 
       {rows.length===0?(
         <div style={{textAlign:"center",padding:"48px",color:"#999",fontSize:13,border:"1px dashed #e0e0e0",borderRadius:10}}>No data in this module yet.</div>
       ):(
+        <>
+        {/* ── Summary Widgets ── */}
+        <SetReportSummary rows={rows} pendingEdits={pendingEdits} selectedMod={selectedMod} selectedDay={selectedDay} selectedModLabel={selectedModLabel}/>
         <div className="card" style={{padding:0,overflow:"hidden"}}>
           {/* Bulk actions bar */}
           <div style={{padding:"8px 14px",background:"#f2f2f2",borderBottom:"1px solid #e0e0e0",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -3288,23 +3336,23 @@ function SetReportTab({sch,project}){
                   .map((row,ri)=>{
                     const rowTotal=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((s,c)=>s+(c._isCurrency?c._total:0),0);
                     const bank=matchBank(row._name);
-                    return <SetReportRow key={ri} ri={ri} row={row} rowTotal={rowTotal} bank={bank} registerRef={ref=>{rowRefs.current[ri]=ref;}}/>;
+                    return <SetReportRow key={ri} ri={ri} row={row} rowTotal={rowTotal} bank={bank} pendingVal={pendingEdits[ri]||""} onPendingChange={(v)=>setPendingEdits(p=>({...p,[ri]:v}))} registerRef={ref=>{rowRefs.current[ri]=ref;}}/>;
                   })}
               </tbody>
             </table>
           </div>
         </div>
+        </>
       )}
     </div>
   );
 }
 
-function SetReportRow({ri,row,rowTotal,bank,registerRef}){
-  const [pending,setPending]=useState("");
+function SetReportRow({ri,row,rowTotal,bank,pendingVal,onPendingChange,registerRef}){
   const [mop,setMop]=useState("");
   const [sent,setSent]=useState(false);
   const [selected,setSelected]=useState(false);
-  const ob=rowTotal-(parseFloat(pending)||0);
+  const ob=rowTotal-(parseFloat(pendingVal)||0);
   useEffect(()=>{
     if(registerRef)registerRef({setSent,setSelected,getSent:()=>sent,getSelected:()=>selected});
   });
@@ -3318,8 +3366,8 @@ function SetReportRow({ri,row,rowTotal,bank,registerRef}){
       <td style={{padding:"4px 10px",background:"#fffbee"}}>
         <input
           type="text"
-          value={pending}
-          onChange={e=>setPending(e.target.value)}
+          value={pendingVal}
+          onChange={e=>onPendingChange(e.target.value)}
           style={{width:100,background:"#fff",border:"1px solid #c77d0a",borderRadius:6,padding:"6px 8px",color:"#c77d0a",fontWeight:700,fontSize:13,textAlign:"right",outline:"none",display:"block"}}
         />
       </td>
@@ -3534,9 +3582,20 @@ function ScheduleViewer({project,sch,updateSchedule,undoKey,canUndo,onBack,store
       </div>
       {/* Content */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <div style={{height:44,background:"#f8f8f8",borderBottom:"1px solid #f0f4f8",display:"flex",alignItems:"center",padding:"0 24px",flexShrink:0}}>
-          <span style={{fontSize:12,color:"#999999",fontWeight:600,letterSpacing:.5}}>{project.name.toUpperCase()} · {sch.name.toUpperCase()}</span>
-          <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{background:"#f8f8f8",borderBottom:"1px solid #e0e0e0",padding:"0 24px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between",minHeight:44}}>
+          {/* Breadcrumb */}
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",padding:"10px 0"}}>
+            <span onClick={onBack} style={{fontSize:12,color:"#2563eb",fontWeight:600,cursor:"pointer",padding:"2px 6px",borderRadius:5,transition:"background .1s"}} onMouseEnter={e=>e.currentTarget.style.background="#e0e8ff"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>Projects</span>
+            <span style={{fontSize:12,color:"#cccccc"}}>›</span>
+            <span onClick={onBack} style={{fontSize:12,color:"#2563eb",fontWeight:600,cursor:"pointer",padding:"2px 6px",borderRadius:5,transition:"background .1s"}} onMouseEnter={e=>e.currentTarget.style.background="#e0e8ff"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>{project.name}</span>
+            <span style={{fontSize:12,color:"#cccccc"}}>›</span>
+            <span style={{fontSize:12,color:"#444444",fontWeight:600,padding:"2px 6px"}}>{sch.name}</span>
+            {tab!=="dashboard"&&<><span style={{fontSize:12,color:"#cccccc"}}>›</span>
+            <span style={{fontSize:12,color:"#111111",fontWeight:700,padding:"2px 6px",background:"#e8e8e8",borderRadius:5}}>
+              {tab==="report"?"Headcount Report":tab==="setreport"?"Set Report":tab==="daily"?(mnames.daily||"Daily Expenses"):tab==="costumes"?(mnames.costumes||"Costumes"):tab==="tbl"?(mnames.tbl||"TBL"):tab==="equipment"?(mnames.equipment||"Equipment"):tab==="vehicles"?(mnames.vehicles||"Shot Vehicles"):tab==="rooms"?(mnames.rooms||"Room List"):activeMod?(activeMod.icon+" "+activeMod.name):tab}
+            </span></>}
+          </div>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
             <span style={{fontSize:11,color:"#999999"}}>Auto-saved</span>
             <span style={{width:6,height:6,borderRadius:"50%",background:"#16a34a",display:"inline-block"}}/>
           </div>
