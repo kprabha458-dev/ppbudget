@@ -3173,16 +3173,21 @@ function SetReportSummary({rows,pendingEdits,selectedMod,selectedDay,selectedMod
   );
 }
 
-function SetReportTab({sch,project}){
+function SetReportTab({sch,project,updateSchedule,pid}){
   const mnames=sch.moduleNames||{};
   const bankDetails=project.bankDetails||[];
+  // All set report data persisted in sch.setReportData = { [rowKey]: {pending,mop,sent} }
+  const srData=sch.setReportData||{};
+  const save=(key,field,val)=>{
+    updateSchedule(pid,sch.id,s=>({...s,setReportData:{...(s.setReportData||{}),[key]:{...(s.setReportData?.[key]||{}),[field]:val}}}));
+  };
+
   const [selectedMod,setSelectedMod]=useState("daily");
   const [selectedDay,setSelectedDay]=useState("all");
   const [showFilter,setShowFilter]=useState(false);
   const [filterVals,setFilterVals]=useState({});
-  const [pendingEdits,setPendingEdits]=useState({}); // {ri: stringValue} — lifted from rows
-  const rowRefs=useRef({}); // {ri: {setSent, getSent, setSelected, getSelected}}
-  const [bulkTick,setBulkTick]=useState(0); // force re-render for select-all checkbox
+  const rowRefs=useRef({});
+  const [bulkTick,setBulkTick]=useState(0);
 
   const builtInMods=[
     {id:"daily",label:mnames.daily||"Daily Expenses"},
@@ -3201,10 +3206,14 @@ function SetReportTab({sch,project}){
     return bankDetails.find(b=>(b.name||"").trim().toLowerCase()===n)||null;
   };
 
+  // Build stable row key — survives day switching and "All Days" view
+  const makeKey=(mod,day,idx)=>day?`${mod}__${day}__${idx}`:`${mod}__${idx}`;
+
   const getRows=()=>{
     if(selectedMod==="daily"){
       const days=selectedDay==="all"?(sch.dayOrder||[]):[selectedDay];
-      return days.flatMap(day=>(sch.dailyExpenses?.[day]||[]).map(r=>({
+      return days.flatMap(day=>(sch.dailyExpenses?.[day]||[]).map((r,i)=>({
+        _rowKey:makeKey("daily",day,i),
         _day:day, _name:r.item||"",
         cols:[
           {label:"Day",val:day},
@@ -3224,7 +3233,8 @@ function SetReportTab({sch,project}){
     else if(selectedMod==="vehicles"){rows=sch.vehicles||[];cols=sch.vehicleCols||DEFAULT_VEHICLE_COLS;}
     else if(selectedMod==="rooms"){rows=sch.rooms||[];cols=sch.roomCols||DEFAULT_ROOM_COLS;}
     else{const cm=(sch.customModules||[]).find(m=>m.id===selectedMod);if(cm){rows=cm.rows||[];cols=cm.columns||[];}}
-    return rows.map(r=>({
+    return rows.map((r,i)=>({
+      _rowKey:makeKey(selectedMod,null,i),
       _name:r[cols[0]?.key]||"",
       cols:cols.map(c=>({
         label:c.label,
@@ -3238,7 +3248,6 @@ function SetReportTab({sch,project}){
   const rows=getRows();
   const days=sch.dayOrder||[];
 
-  // Simple export
   const exportXLSX=()=>{
     const wb=XLSX.utils.book_new();
     const tableEl=document.getElementById("setreport-table");
@@ -3250,15 +3259,38 @@ function SetReportTab({sch,project}){
 
   const selectedModLabel=allMods.find(m=>m.id===selectedMod)?.label||"";
 
+  // Compute widgets from persisted srData
+  const grandTotal=rows.reduce((s,row)=>{
+    return s+(row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((a,c)=>a+(c._isCurrency?c._total:0),0));
+  },0);
+  const pendingTotal=rows.reduce((s,row)=>s+(parseFloat(srData[row._rowKey]?.pending)||0),0);
+  let obNeg=0,obPos=0;
+  rows.forEach(row=>{
+    const rt=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((a,c)=>a+(c._isCurrency?c._total:0),0);
+    const ob=rt-(parseFloat(srData[row._rowKey]?.pending)||0);
+    if(ob<0)obNeg+=ob; else obPos+=ob;
+  });
+  const label=selectedMod==="daily"&&selectedDay!=="all"?selectedDay:selectedModLabel;
+
+  const W=({title,value,color,bg,border,sub})=>(
+    <div style={{background:bg||"#ffffff",border:"1px solid "+(border||"#e0e0e0"),borderRadius:10,padding:"14px 20px",minWidth:150,flex:1}}>
+      <div style={{fontSize:10,fontWeight:700,color:"#888888",letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>{title}</div>
+      <div style={{fontSize:22,fontWeight:800,color:color||"#111111",letterSpacing:-0.5,lineHeight:1.1}}>{value}</div>
+      {sub&&<div style={{fontSize:10,color:"#aaaaaa",marginTop:5}}>{sub}</div>}
+    </div>
+  );
+
+  const filteredRows=rows.filter(row=>Object.entries(filterVals).every(([lbl,val])=>!val||String(row.cols.find(c=>c.label===lbl)?.val||"").toLowerCase().includes(val.toLowerCase())));
+
   return(
     <div className="fade">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
         <div>
           <div style={{fontWeight:800,fontSize:18,color:"#111111",marginBottom:3}}>📋 Set Report</div>
-          <div style={{fontSize:12,color:"#666666"}}>Pending Billing is editable · OB/Savings = Total − Pending Billing</div>
+          <div style={{fontSize:12,color:"#666666"}}>Pending Billing is editable · OB/Savings = Total − Pending Billing · Auto-saved</div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setSelectedDay("all");setFilterVals({});setPendingEdits({});rowRefs.current={};}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setSelectedDay("all");setFilterVals({});rowRefs.current={};}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
             {allMods.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
           <button onClick={()=>setShowFilter(f=>!f)} style={{background:showFilter?"#22222218":"#f8f8f8",border:"1px solid "+(showFilter?"#222":"#d8d8d8"),borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#222"}}>⌕ Filter</button>
@@ -3285,8 +3317,8 @@ function SetReportTab({sch,project}){
       {selectedMod==="daily"&&(
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:11,fontWeight:700,color:"#666"}}>Show:</span>
-          <button onClick={()=>{setSelectedDay("all");setPendingEdits({});}} style={{background:selectedDay==="all"?"#222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
-          {days.map(d=><button key={d} onClick={()=>{setSelectedDay(d);setPendingEdits({});}} style={{background:selectedDay===d?"#222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
+          <button onClick={()=>setSelectedDay("all")} style={{background:selectedDay==="all"?"#222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
+          {days.map(d=><button key={d} onClick={()=>setSelectedDay(d)} style={{background:selectedDay===d?"#222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
         </div>
       )}
 
@@ -3295,15 +3327,21 @@ function SetReportTab({sch,project}){
       ):(
         <>
         {/* ── Summary Widgets ── */}
-        <SetReportSummary rows={rows} pendingEdits={pendingEdits} selectedMod={selectedMod} selectedDay={selectedDay} selectedModLabel={selectedModLabel}/>
+        <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+          <W title={label+" · Total"} value={fmt(grandTotal)} color="#111111" bg="#f8f8f8" border="#e0e0e0" sub="Grand total of all rows"/>
+          <W title="Pending Billing" value={fmt(pendingTotal)} color="#c77d0a" bg="#fffbee" border="#c77d0a44" sub="Sum of pending billing"/>
+          <W title="OB Total" value={"−"+fmt(Math.abs(obNeg))} color="#dc2626" bg="#fff5f5" border="#dc262644" sub="Over-billed rows"/>
+          <W title="Savings Total" value={fmt(obPos)} color="#16a34a" bg="#f0fdf4" border="#16a34a44" sub="Under-billed rows"/>
+        </div>
+
         <div className="card" style={{padding:0,overflow:"hidden"}}>
           {/* Bulk actions bar */}
           <div style={{padding:"8px 14px",background:"#f2f2f2",borderBottom:"1px solid #e0e0e0",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
             <input type="checkbox" onChange={e=>{Object.values(rowRefs.current).forEach(ref=>ref?.setSelected(e.target.checked));setBulkTick(t=>t+1);}} style={{cursor:"pointer",width:14,height:14}}/>
             <span style={{fontSize:11,color:"#666",fontWeight:600}}>Select All</span>
             <div style={{width:1,height:16,background:"#d8d8d8",margin:"0 4px"}}/>
-            <button onClick={()=>{Object.values(rowRefs.current).forEach(ref=>{if(ref?.getSelected())ref.setSent(true);});setBulkTick(t=>t+1);}} style={{background:"#222",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Mark Sent</button>
-            <button onClick={()=>{Object.values(rowRefs.current).forEach(ref=>{if(ref?.getSelected())ref.setSent(false);});setBulkTick(t=>t+1);}} style={{background:"#f8f8f8",color:"#666",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer"}}>✗ Mark Unsent</button>
+            <button onClick={()=>{filteredRows.forEach(row=>{if(rowRefs.current[row._rowKey]?.getSelected())save(row._rowKey,"sent",true);});setBulkTick(t=>t+1);}} style={{background:"#222",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Mark Sent</button>
+            <button onClick={()=>{filteredRows.forEach(row=>{if(rowRefs.current[row._rowKey]?.getSelected())save(row._rowKey,"sent",false);});setBulkTick(t=>t+1);}} style={{background:"#f8f8f8",color:"#666",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer"}}>✗ Mark Unsent</button>
           </div>
           {/* Filter row */}
           {showFilter&&(
@@ -3331,13 +3369,15 @@ function SetReportTab({sch,project}){
                 </tr>
               </thead>
               <tbody>
-                {rows
-                  .filter(row=>Object.entries(filterVals).every(([label,val])=>!val||String(row.cols.find(c=>c.label===label)?.val||"").toLowerCase().includes(val.toLowerCase())))
-                  .map((row,ri)=>{
-                    const rowTotal=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((s,c)=>s+(c._isCurrency?c._total:0),0);
-                    const bank=matchBank(row._name);
-                    return <SetReportRow key={ri} ri={ri} row={row} rowTotal={rowTotal} bank={bank} pendingVal={pendingEdits[ri]||""} onPendingChange={(v)=>setPendingEdits(p=>({...p,[ri]:v}))} registerRef={ref=>{rowRefs.current[ri]=ref;}}/>;
-                  })}
+                {filteredRows.map((row,ri)=>{
+                  const rowTotal=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((s,c)=>s+(c._isCurrency?c._total:0),0);
+                  const bank=matchBank(row._name);
+                  const saved=srData[row._rowKey]||{};
+                  return <SetReportRow key={row._rowKey} rowKey={row._rowKey} ri={ri} row={row} rowTotal={rowTotal} bank={bank}
+                    initPending={saved.pending||""} initMop={saved.mop||""} initSent={!!saved.sent}
+                    onSave={save}
+                    registerRef={ref=>{rowRefs.current[row._rowKey]=ref;}}/>;
+                })}
               </tbody>
             </table>
           </div>
@@ -3348,11 +3388,12 @@ function SetReportTab({sch,project}){
   );
 }
 
-function SetReportRow({ri,row,rowTotal,bank,pendingVal,onPendingChange,registerRef}){
-  const [mop,setMop]=useState("");
-  const [sent,setSent]=useState(false);
+function SetReportRow({rowKey,ri,row,rowTotal,bank,initPending,initMop,initSent,onSave,registerRef}){
+  const [pending,setPending]=useState(initPending);
+  const [mop,setMop]=useState(initMop);
+  const [sent,setSent]=useState(initSent);
   const [selected,setSelected]=useState(false);
-  const ob=rowTotal-(parseFloat(pendingVal)||0);
+  const ob=rowTotal-(parseFloat(pending)||0);
   useEffect(()=>{
     if(registerRef)registerRef({setSent,setSelected,getSent:()=>sent,getSelected:()=>selected});
   });
@@ -3364,10 +3405,10 @@ function SetReportRow({ri,row,rowTotal,bank,pendingVal,onPendingChange,registerR
         <td key={ci} style={{padding:"7px 12px",textAlign:c._isCurrency?"right":"left",color:c.label==="Total"?"#222":c.label==="Day"?"#7c3aed":"#111",fontWeight:c.label==="Total"||c.label==="Item"||c.label==="Day"?700:400,whiteSpace:"nowrap"}}>{c.val}</td>
       ))}
       <td style={{padding:"4px 10px",background:"#fffbee"}}>
-        <input
-          type="text"
-          value={pendingVal}
-          onChange={e=>onPendingChange(e.target.value)}
+        <input type="text" value={pending}
+          onChange={e=>setPending(e.target.value)}
+          onBlur={e=>onSave(rowKey,"pending",e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"){e.target.blur();}}}
           style={{width:100,background:"#fff",border:"1px solid #c77d0a",borderRadius:6,padding:"6px 8px",color:"#c77d0a",fontWeight:700,fontSize:13,textAlign:"right",outline:"none",display:"block"}}
         />
       </td>
@@ -3381,16 +3422,15 @@ function SetReportRow({ri,row,rowTotal,bank,pendingVal,onPendingChange,registerR
         ):<span style={{color:"#bbb"}}>—</span>}
       </td>
       <td style={{padding:"4px 10px"}}>
-        <input
-          type="text"
-          value={mop}
+        <input type="text" value={mop}
           onChange={e=>setMop(e.target.value)}
+          onBlur={e=>onSave(rowKey,"mop",e.target.value)}
           placeholder="Cash/NEFT/UPI…"
           style={{width:110,background:"#fff",border:"1px solid #7c3aed55",borderRadius:6,padding:"5px 8px",color:"#7c3aed",fontWeight:600,fontSize:12,outline:"none",display:"block"}}
         />
       </td>
       <td style={{padding:"6px 12px",textAlign:"center"}}>
-        <div onClick={()=>setSent(s=>!s)} style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",background:sent?"#222":"#f8f8f8",border:"2px solid "+(sent?"#222":"#d8d8d8"),borderRadius:20,padding:"3px 10px",transition:"all .15s"}}>
+        <div onClick={()=>{const ns=!sent;setSent(ns);onSave(rowKey,"sent",ns);}} style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",background:sent?"#222":"#f8f8f8",border:"2px solid "+(sent?"#222":"#d8d8d8"),borderRadius:20,padding:"3px 10px",transition:"all .15s"}}>
           <div style={{width:26,height:14,borderRadius:7,background:sent?"#fff4":"#d8d8d8",position:"relative",flexShrink:0}}>
             <div style={{width:10,height:10,borderRadius:5,background:sent?"#fff":"#888",position:"absolute",top:2,left:sent?14:2,transition:"left .15s"}}/>
           </div>
