@@ -3129,49 +3129,16 @@ function DynamicModTab({sch,pid,updateSchedule,undoKey,canUndo,containerRef,modK
 /* ─────────────────────────────────────────────
    REPORT ROW — top-level to prevent remount on parent re-render
 ───────────────────────────────────────────── */
-function ReportRow({r,i,cols,rowKey,getTotal,descKey,bank,isSent,isSelected,pendingInit,mopInit,onPendingBlur,onPendingChange,onMopChange,onToggleSent,onToggleRow}){
-  const initOB=getTotal(r,cols)-(parseFloat(pendingInit)||0);
-  const [liveOB,setLiveOB]=useState(initOB);
-  const [mop,setMop]=useState(mopInit||"");
-  return(
-    <tr className="row-hover" style={{borderBottom:"1px solid #f0f0f0",background:isSent?"#f0fdf4":"#ffffff"}}>
-      <td style={{padding:"6px 10px"}}><input type="checkbox" checked={isSelected} onChange={()=>onToggleRow(rowKey)} style={{cursor:"pointer"}}/></td>
-      <td style={{padding:"7px 10px",color:"#999",fontSize:11}}>{i+1}</td>
-      {cols.map(c=>(
-        <td key={c.key} style={{padding:"7px 10px",textAlign:c.type==="currency"||c.type==="number"||c.type==="formula"?"right":"left",color:c.key==="_total"?"#222222":"#111111",fontWeight:c.key===descKey||c.key==="_total"?700:400,whiteSpace:c.type==="text"?"normal":"nowrap"}}>
-          {c.key==="_total"?fmt(getTotal(r,cols)):c.type==="formula"?fmt(evalFormula(c.formula||"",r,cols)):c.type==="currency"?fmt(parseFloat(r[c.key])||0):c.type==="number"?(r[c.key]||0):(r[c.key]||"—")}
-        </td>
-      ))}
-      <td style={{padding:"4px 8px",background:"#fffbee"}}>
-        <input type="text" defaultValue={pendingInit} onChange={e=>{onPendingChange(rowKey,e.target.value);setLiveOB(getTotal(r,cols)-(parseFloat(e.target.value)||0));}} onBlur={e=>onPendingBlur(rowKey,e.target.value)} onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}} style={{width:100,background:"#fff",border:"1px solid #c77d0a",borderRadius:6,padding:"6px 8px",color:"#c77d0a",fontWeight:700,fontSize:13,textAlign:"right",outline:"none"}}/>
-      </td>
-      <td style={{padding:"7px 10px",textAlign:"right",color:liveOB<0?"#dc2626":"#16a34a",fontWeight:700,background:"#f0fdf4",whiteSpace:"nowrap"}}>{fmt(liveOB)}</td>
-      <td style={{padding:"7px 10px",fontSize:11,whiteSpace:"nowrap",minWidth:160}}>
-        {bank?(
-          <div style={{display:"flex",flexDirection:"column",gap:1}}>
-            <span style={{color:"#2563eb",fontWeight:600,fontSize:12}}>{bank.accountNo}</span>
-            <span style={{color:"#666",fontSize:10}}>{bank.bankName}{bank.ifsc?" · "+bank.ifsc:""}</span>
-          </div>
-        ):<span style={{color:"#aaa"}}>—</span>}
-      </td>
-      <td style={{padding:"4px 8px"}}>
-        <input type="text" value={mop} onChange={e=>{const v=e.target.value;setMop(v);onMopChange(rowKey,v);}} placeholder="Cash/NEFT/UPI…" style={{width:110,background:"#fff",border:"1px solid #7c3aed55",borderRadius:6,padding:"5px 8px",color:"#7c3aed",fontWeight:600,fontSize:12,outline:"none"}}/>
-      </td>
-      <td style={{padding:"6px 10px",textAlign:"center"}}>
-        <div onClick={()=>onToggleSent(rowKey)} style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",background:isSent?"#222222":"#f8f8f8",border:"2px solid "+(isSent?"#222222":"#d8d8d8"),borderRadius:20,padding:"3px 10px",transition:"all .15s"}}>
-          <div style={{width:26,height:14,borderRadius:7,background:isSent?"#ffffff44":"#d8d8d8",position:"relative",flexShrink:0}}>
-            <div style={{width:10,height:10,borderRadius:5,background:isSent?"#fff":"#888",position:"absolute",top:2,left:isSent?14:2,transition:"left .15s"}}/>
-          </div>
-          <span style={{fontSize:10,fontWeight:700,color:isSent?"#fff":"#666"}}>{isSent?"Sent":"Draft"}</span>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function SetReportTab({sch,project,updateSchedule,pid}){
+function SetReportTab({sch,project}){
   const mnames=sch.moduleNames||{};
   const bankDetails=project.bankDetails||[];
+  const [selectedMod,setSelectedMod]=useState("daily");
+  const [selectedDay,setSelectedDay]=useState("all");
+  const [showFilter,setShowFilter]=useState(false);
+  const [filterVals,setFilterVals]=useState({});
+  const rowRefs=useRef({}); // {ri: {setSent, getSent, setSelected, getSelected}}
+  const [bulkTick,setBulkTick]=useState(0); // force re-render for select-all checkbox
+
   const builtInMods=[
     {id:"daily",label:mnames.daily||"Daily Expenses"},
     {id:"costumes",label:mnames.costumes||"Costumes"},
@@ -3180,256 +3147,87 @@ function SetReportTab({sch,project,updateSchedule,pid}){
     {id:"vehicles",label:mnames.vehicles||"Shot Vehicles"},
     {id:"rooms",label:mnames.rooms||"Room List"},
   ];
-  const customMods=(sch.customModules||[]).map(m=>({id:m.id,label:m.icon+" "+m.name,custom:true,mod:m}));
+  const customMods=(sch.customModules||[]).map(m=>({id:m.id,label:m.icon+" "+m.name}));
   const allMods=[...builtInMods,...customMods];
 
-  const [selectedMod,setSelectedMod]=useState("daily");
-  const [selectedDay,setSelectedDay]=useState("all");
-  const [pendingEdits,setPendingEdits]=useState({});
-  const pendingRef=useRef({});
-  const [sentRows,setSentRows]=useState({});
-  const [selectedRows,setSelectedRows]=useState(new Set());
-  const [filterVals,setFilterVals]=useState({});
-  const [showFilter,setShowFilter]=useState(false);
-  const [mopEdits,setMopEdits]=useState({});
-  const [,forceUpdate]=useState(0);
-
-  const setPending=(key,val)=>{
-    pendingRef.current[key]=val;
-    setPendingEdits(p=>({...p,[key]:val}));
-  };
-  const getPending=(key)=>pendingRef.current[key]??pendingEdits[key]??"";
-  const toggleSent=(key)=>setSentRows(p=>({...p,[key]:!p[key]}));
-  const toggleRow=(key)=>setSelectedRows(s=>{const n=new Set(s);n.has(key)?n.delete(key):n.add(key);return n;});
-  const toggleAll=(keys)=>setSelectedRows(s=>s.size===keys.length?new Set():new Set(keys));
-  const bulkSetSent=(val)=>{selectedRows.forEach(k=>setSentRows(p=>({...p,[k]:val})));setSelectedRows(new Set());};
-
-  const matchBank=(nameVal)=>{
-    if(!nameVal)return null;
-    const nm=(nameVal||"").trim().toLowerCase();
-    return bankDetails.find(b=>(b.name||"").trim().toLowerCase()===nm)||null;
+  const matchBank=(name)=>{
+    if(!name)return null;
+    const n=name.trim().toLowerCase();
+    return bankDetails.find(b=>(b.name||"").trim().toLowerCase()===n)||null;
   };
 
-  // Get module data — always use actual columns from the module
-  const getModData=(modId)=>{
-    if(modId==="costumes") return {rows:sch.costumes||[],cols:sch.costumeCols||DEFAULT_COSTUME_COLS,descKey:(sch.costumeCols||DEFAULT_COSTUME_COLS)[0]?.key||""};
-    if(modId==="tbl")      return {rows:sch.tbl||[],cols:sch.tblCols||DEFAULT_TBL_COLS,descKey:(sch.tblCols||DEFAULT_TBL_COLS)[0]?.key||""};
-    if(modId==="equipment")return {rows:sch.equipment||[],cols:sch.equipCols||DEFAULT_EQUIP_COLS,descKey:(sch.equipCols||DEFAULT_EQUIP_COLS)[0]?.key||""};
-    if(modId==="vehicles") return {rows:sch.vehicles||[],cols:sch.vehicleCols||DEFAULT_VEHICLE_COLS,descKey:(sch.vehicleCols||DEFAULT_VEHICLE_COLS)[0]?.key||""};
-    if(modId==="rooms")    return {rows:sch.rooms||[],cols:sch.roomCols||DEFAULT_ROOM_COLS,descKey:(sch.roomCols||DEFAULT_ROOM_COLS)[0]?.key||""};
-    const cm=(sch.customModules||[]).find(m=>m.id===modId);
-    if(cm) return {rows:cm.rows||[],cols:cm.columns||[],descKey:(cm.columns||[])[0]?.key||""};
-    return {rows:[],cols:[],descKey:""};
-  };
-
-  // Apply column filters
-  const applyFilter=(rows,cols)=>{
-    if(!Object.values(filterVals).some(v=>v)) return rows;
-    return rows.filter(r=>cols.every(c=>{
-      const fv=filterVals[c.key]||"";
-      if(!fv) return true;
-      return String(r[c.key]||"").toLowerCase().includes(fv.toLowerCase());
+  const getRows=()=>{
+    if(selectedMod==="daily"){
+      const days=selectedDay==="all"?(sch.dayOrder||[]):[selectedDay];
+      return days.flatMap(day=>(sch.dailyExpenses?.[day]||[]).map(r=>({
+        _day:day, _name:r.item||"",
+        cols:[
+          {label:"Day",val:day},
+          {label:"Item",val:r.item||"—"},
+          {label:"Dept",val:r.dept||"—"},
+          {label:"No",val:r.no||0},
+          {label:"Units",val:r.units||0},
+          {label:"Rate",val:fmt(r.rate||0)},
+          {label:"Total",val:fmt((parseFloat(r.no)||0)*(parseFloat(r.units)||0)*(parseFloat(r.rate)||0)),_total:(parseFloat(r.no)||0)*(parseFloat(r.units)||0)*(parseFloat(r.rate)||0)},
+        ]
+      })));
+    }
+    let rows=[],cols=[];
+    if(selectedMod==="costumes"){rows=sch.costumes||[];cols=sch.costumeCols||DEFAULT_COSTUME_COLS;}
+    else if(selectedMod==="tbl"){rows=sch.tbl||[];cols=sch.tblCols||DEFAULT_TBL_COLS;}
+    else if(selectedMod==="equipment"){rows=sch.equipment||[];cols=sch.equipCols||DEFAULT_EQUIP_COLS;}
+    else if(selectedMod==="vehicles"){rows=sch.vehicles||[];cols=sch.vehicleCols||DEFAULT_VEHICLE_COLS;}
+    else if(selectedMod==="rooms"){rows=sch.rooms||[];cols=sch.roomCols||DEFAULT_ROOM_COLS;}
+    else{const cm=(sch.customModules||[]).find(m=>m.id===selectedMod);if(cm){rows=cm.rows||[];cols=cm.columns||[];}}
+    return rows.map(r=>({
+      _name:r[cols[0]?.key]||"",
+      cols:cols.map(c=>({
+        label:c.label,
+        val:c.type==="formula"?fmt(evalFormula(c.formula||"",r,cols)):c.type==="currency"?fmt(parseFloat(r[c.key])||0):(r[c.key]||"—"),
+        _total:c.type==="currency"?(parseFloat(r[c.key])||0):c.type==="formula"?evalFormula(c.formula||"",r,cols):0,
+        _isCurrency:c.type==="currency"||c.type==="formula"
+      }))
     }));
   };
 
-  // XLSX export
-  const exportXLSX=(rows,cols,label,extraCols)=>{
+  const rows=getRows();
+  const days=sch.dayOrder||[];
+
+  // Simple export
+  const exportXLSX=()=>{
     const wb=XLSX.utils.book_new();
-    const headers=[...cols.map(c=>c.label),"Pending Billing","OB / Savings","Sent for Approval",...extraCols.map(c=>c.label)];
-    const data=rows.map((r,i)=>{
-      const rowKey=(selectedMod==="daily"?(r._day||"")+"_"+i:selectedMod+"_"+i);
-      const pending=parseFloat(pendingEdits[rowKey])||0;
-      const total=cols.reduce((s,c)=>c.type==="formula"?s+evalFormula(c.formula||"",r,cols):s,0)||parseFloat(r[cols.find(c=>c.type==="currency")?.key||""])||0;
-      const ob=total-pending;
-      const bank=matchBank(r[extraCols[0]?._descKey||cols[0]?.key]||"");
-      const row={};
-      cols.forEach(c=>{row[c.label]=c.type==="currency"?parseFloat(r[c.key])||0:r[c.key]||"";});
-      row["Pending Billing"]=pending||"";
-      row["OB / Savings"]=ob;
-      row["Sent for Approval"]=sentRows[rowKey]?"Yes":"No";
-      row["Account No"]=bank?.accountNo||"";
-      row["Bank Name"]=bank?.bankName||"";
-      row["IFSC"]=bank?.ifsc||"";
-      return row;
-    });
-    const ws=XLSX.utils.json_to_sheet(data,{header:headers});
-    XLSX.utils.book_append_sheet(wb,ws,label.slice(0,31));
-    XLSX.writeFile(wb,"SetReport_"+(label||"export").replace(/\s/g,"_")+".xlsx");
-  };
-
-  // ── Shared table renderer ──
-  const ReportTable=({rows,cols,getRowKey,getTotal,descKey})=>{
-    const filtered=applyFilter(rows,cols);
-    const allKeys=filtered.map((_,i)=>getRowKey(i));
-    if(filtered.length===0) return <div style={{textAlign:"center",padding:"40px",color:"#999999",fontSize:13}}>No data found.</div>;
-    return(
-      <div style={{overflowX:"auto"}}>
-        {selectedRows.size>0&&(
-          <div style={{background:"#f2f2f2",padding:"8px 14px",display:"flex",gap:8,alignItems:"center",borderBottom:"1px solid #e0e0e0"}}>
-            <span style={{fontSize:12,fontWeight:700,color:"#111111"}}>{selectedRows.size} selected</span>
-            <button onClick={()=>bulkSetSent(true)} style={{background:"#222222",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Mark Sent</button>
-            <button onClick={()=>bulkSetSent(false)} style={{background:"#f8f8f8",color:"#666666",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer"}}>✗ Mark Unsent</button>
-            <button onClick={()=>setSelectedRows(new Set())} style={{background:"none",border:"none",color:"#999999",fontSize:11,cursor:"pointer"}}>Cancel</button>
-          </div>
-        )}
-        {showFilter&&(
-          <div style={{display:"flex",gap:4,padding:"6px 12px",background:"#fafafa",borderBottom:"1px solid #e0e0e0",flexWrap:"wrap"}}>
-            {cols.filter(c=>c.key!=="_total").map(c=>(
-              <input key={c.key} value={filterVals[c.key]||""} onChange={e=>setFilterVals(p=>({...p,[c.key]:e.target.value}))} placeholder={"Filter "+c.label} style={{background:"#fff",border:"1px solid #d8d8d8",borderRadius:5,padding:"3px 8px",fontSize:11,width:100}}/>
-            ))}
-            <button onClick={()=>setFilterVals({})} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:5,padding:"3px 8px",fontSize:11,color:"#dc2626",cursor:"pointer"}}>Clear</button>
-          </div>
-        )}
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-          <thead><tr style={{background:"#f8f8f8"}}>
-            <th style={{padding:"8px 10px",width:32}}><input type="checkbox" checked={selectedRows.size===allKeys.length&&allKeys.length>0} onChange={()=>toggleAll(allKeys)} style={{cursor:"pointer"}}/></th>
-            <th style={{padding:"8px 10px",color:"#666",fontSize:11,fontWeight:700,borderBottom:"2px solid #e0e0e0"}}>#</th>
-            {cols.map(c=><th key={c.key} style={{padding:"8px 10px",textAlign:c.type==="currency"||c.type==="number"||c.type==="formula"?"right":"left",fontWeight:700,color:"#666",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>{c.label}</th>)}
-            <th style={{padding:"8px 10px",textAlign:"right",fontWeight:700,color:"#c77d0a",fontSize:11,borderBottom:"2px solid #e0e0e0",background:"#fffbee",whiteSpace:"nowrap"}}>Pending Billing</th>
-            <th style={{padding:"8px 10px",textAlign:"right",fontWeight:700,color:"#16a34a",fontSize:11,borderBottom:"2px solid #e0e0e0",background:"#f0fdf4",whiteSpace:"nowrap"}}>OB / Savings</th>
-            <th style={{padding:"8px 10px",fontWeight:700,color:"#2563eb",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Bank Details</th>
-            <th style={{padding:"8px 10px",fontWeight:700,color:"#7c3aed",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Mode of Payment</th>
-            <th style={{padding:"8px 10px",fontWeight:700,color:"#555",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Sent</th>
-          </tr></thead>
-          <tbody>
-            {filtered.map((r,i)=>{
-              const rowKey=getRowKey(i);
-              return <ReportRow key={rowKey} r={r} i={i} cols={cols} rowKey={rowKey} getTotal={getTotal} descKey={descKey} bank={matchBank(r[descKey]||"")} isSent={!!sentRows[rowKey]} isSelected={selectedRows.has(rowKey)} pendingInit={pendingRef.current[rowKey]??pendingEdits[rowKey]??""} mopInit={mopEdits[rowKey]||""} onPendingBlur={(k,v)=>setPending(k,v)} onPendingChange={(k,v)=>{pendingRef.current[k]=v;}} onMopChange={(k,v)=>setMopEdits(p=>({...p,[k]:v}))} onToggleSent={toggleSent} onToggleRow={toggleRow}/>;
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  // ── Daily Report ──
-  const DailyReport=()=>{
-    const days=sch.dayOrder||[];
-    if(days.length===0) return <div style={{textAlign:"center",padding:"48px",color:"#999999",fontSize:14}}>No days in this schedule yet.</div>;
-    const dailyCols=[
-      {key:"item",label:"Item",type:"text"},
-      {key:"dept",label:"Dept",type:"text"},
-      {key:"no",label:"No",type:"number"},
-      {key:"units",label:"Units",type:"number"},
-      {key:"rate",label:"Rate",type:"currency"},
-      {key:"_total",label:"Total",type:"currency"},
-    ];
-    const visibleDays=selectedDay==="all"?days:[selectedDay];
-    const allRows=visibleDays.flatMap(day=>(sch.dailyExpenses[day]||[]).map(r=>({...r,_day:day})));
-    const getTotal=(r)=>(parseFloat(r.no)||0)*(parseFloat(r.units)||0)*(parseFloat(r.rate)||0);
-    return(
-      <div>
-        {/* Day selector */}
-        <div style={{padding:"10px 14px",borderBottom:"1px solid #e0e0e0",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",background:"#fafafa"}}>
-          <span style={{fontSize:11,fontWeight:700,color:"#666666"}}>Show:</span>
-          <button onClick={()=>setSelectedDay("all")} style={{background:selectedDay==="all"?"#222222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222222":"#d8d8d8"),borderRadius:6,padding:"3px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
-          {days.map(d=>(
-            <button key={d} onClick={()=>setSelectedDay(d)} style={{background:selectedDay===d?"#222222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222222":"#d8d8d8"),borderRadius:6,padding:"3px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>
-          ))}
-        </div>
-        {selectedDay==="all"?days.map(day=>{
-          const rows=(sch.dailyExpenses[day]||[]);
-          if(!rows.length) return null;
-          return(
-            <div key={day}>
-              <div style={{padding:"8px 14px",background:"#f2f2f2",borderBottom:"1px solid #e0e0e0",fontWeight:700,fontSize:13,color:"#111111"}}>
-                {day} <span style={{fontSize:11,color:"#666",fontWeight:500}}>· {rows.length} entry(s)</span>
-              </div>
-              <ReportTable rows={rows} cols={dailyCols} getRowKey={i=>day+"_"+i} getTotal={getTotal} descKey="item"/>
-            </div>
-          );
-        }):(
-          <ReportTable rows={sch.dailyExpenses[selectedDay]||[]} cols={dailyCols} getRowKey={i=>selectedDay+"_"+i} getTotal={getTotal} descKey="item"/>
-        )}
-      </div>
-    );
-  };
-
-  // ── Generic Report ──
-  const GenericReport=({modId})=>{
-    const {rows,cols,descKey}=getModData(modId);
-    if(!rows.length) return <div style={{textAlign:"center",padding:"48px",color:"#999999",fontSize:14}}>No data in this module yet.</div>;
-    const getTotal=(r,cs)=>cs.reduce((s,c)=>{
-      if(c.type==="formula") return s+evalFormula(c.formula||"",r,cs);
-      if(c.type==="currency") return s+(parseFloat(r[c.key])||0);
-      return s;
-    },0);
-    return <ReportTable rows={rows} cols={cols} getRowKey={i=>modId+"_"+i} getTotal={getTotal} descKey={descKey}/>;
+    const tableEl=document.getElementById("setreport-table");
+    if(!tableEl)return;
+    const ws=XLSX.utils.table_to_sheet(tableEl);
+    XLSX.utils.book_append_sheet(wb,ws,selectedMod.slice(0,31));
+    XLSX.writeFile(wb,"SetReport_"+selectedMod+".xlsx");
   };
 
   const selectedModLabel=allMods.find(m=>m.id===selectedMod)?.label||"";
 
-  // Export current view
-  const handleExport=()=>{
-    const wb=XLSX.utils.book_new();
-    const bankHdrs=["Account No","Bank Name","IFSC"];
-    if(selectedMod==="daily"){
-      const dailyCols=[{key:"item",label:"Item"},{key:"dept",label:"Dept"},{key:"no",label:"No"},{key:"units",label:"Units"},{key:"rate",label:"Rate"}];
-      const days=sch.dayOrder||[];
-      const visDays=selectedDay==="all"?days:[selectedDay];
-      visDays.forEach(day=>{
-        const rows=applyFilter(sch.dailyExpenses[day]||[],dailyCols);
-        if(!rows.length) return;
-        const data=rows.map((r,i)=>{
-          const rk=day+"_"+i;
-          const pending=parseFloat(pendingEdits[rk])||0;
-          const total=r.no*r.units*r.rate;
-          const bank=matchBank(r.item||"");
-          return{"Item":r.item||"","Dept":r.dept||"","No":r.no||0,"Units":r.units||0,"Rate":r.rate||0,"Total":total,"Pending Billing":pending,"OB / Savings":total-pending,"Sent for Approval":sentRows[rk]?"Yes":"No","Mode of Payment":mopEdits[rk]||"","Account No":bank?.accountNo||"","Bank Name":bank?.bankName||"","IFSC":bank?.ifsc||""};
-        });
-        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),day.slice(0,31));
-      });
-    } else {
-      const {rows,cols,descKey}=getModData(selectedMod);
-      const filtered=applyFilter(rows,cols);
-      const headers=[...cols.map(c=>c.label),"Pending Billing","OB / Savings","Sent for Approval",...bankHdrs];
-      const data=filtered.map((r,i)=>{
-        const rk=selectedMod+"_"+i;
-        const pending=parseFloat(pendingEdits[rk])||0;
-        const total=cols.reduce((s,c)=>c.type==="formula"?s+evalFormula(c.formula||"",r,cols):c.type==="currency"?s+(parseFloat(r[c.key])||0):s,0);
-        const bank=matchBank(r[descKey]||"");
-        const row={};
-        cols.forEach(c=>{row[c.label]=c.type==="currency"?parseFloat(r[c.key])||0:r[c.key]||"";});
-        row["Pending Billing"]=pending||"";
-        row["OB / Savings"]=total-pending;
-        row["Sent for Approval"]=sentRows[rk]?"Yes":"No";
-        row["Mode of Payment"]=mopEdits[rk]||"";
-        row["Account No"]=bank?.accountNo||"";
-        row["Bank Name"]=bank?.bankName||"";
-        row["IFSC"]=bank?.ifsc||"";
-        return row;
-      });
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data,{header:headers}),selectedModLabel.slice(0,31));
-    }
-    if(!wb.SheetNames.length){alert("No data to export.");return;}
-    XLSX.writeFile(wb,"SetReport_"+selectedModLabel.replace(/\s/g,"_")+".xlsx");
-  };
-
   return(
     <div className="fade">
-      {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16,flexWrap:"wrap",gap:12}}>
         <div>
           <div style={{fontWeight:800,fontSize:18,color:"#111111",marginBottom:3}}>📋 Set Report</div>
-          <div style={{fontSize:12,color:"#666666"}}>Auto-fetched report. Only Pending Billing is editable. Bank details matched by name.</div>
+          <div style={{fontSize:12,color:"#666666"}}>Pending Billing is editable · OB/Savings = Total − Pending Billing</div>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setPendingEdits({});setSelectedRows(new Set());setFilterVals({});setSelectedDay("all");}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <select value={selectedMod} onChange={e=>{setSelectedMod(e.target.value);setSelectedDay("all");setFilterVals({});rowRefs.current={};}} style={{background:"#f8f8f8",border:"1px solid #d8d8d8",borderRadius:8,padding:"7px 12px",color:"#111111",fontSize:13,fontWeight:600,cursor:"pointer"}}>
             {allMods.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
           </select>
-          <button onClick={()=>setShowFilter(f=>!f)} title="Filter columns" style={{background:showFilter?"#22222218":"#f8f8f8",border:"1px solid "+(showFilter?"#222222":"#d8d8d8"),borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:13,color:"#222222",fontWeight:600}}>⌕ Filter</button>
-          <button onClick={handleExport} style={{background:"#222222",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>↓ Export XLSX</button>
+          <button onClick={()=>setShowFilter(f=>!f)} style={{background:showFilter?"#22222218":"#f8f8f8",border:"1px solid "+(showFilter?"#222":"#d8d8d8"),borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#222"}}>⌕ Filter</button>
+          <button onClick={exportXLSX} style={{background:"#222222",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>↓ Export XLSX</button>
         </div>
       </div>
 
-      {/* Bank details bar */}
-      {bankDetails.length>0?(
+      {bankDetails.length>0&&(
         <div style={{background:"#eff6ff",border:"1px solid #2563eb22",borderRadius:8,padding:"8px 14px",marginBottom:14}}>
           <div style={{fontSize:11,fontWeight:700,color:"#2563eb",marginBottom:6}}>🏦 Bank Details Loaded</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
             {bankDetails.map((b,i)=>(
-              <div key={i} style={{background:"#fff",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 10px",fontSize:11,color:"#333333",display:"flex",gap:8}}>
-                <span style={{fontWeight:700,color:"#111111"}}>{b.name||"—"}</span>
+              <div key={i} style={{background:"#fff",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 10px",fontSize:11,display:"flex",gap:8}}>
+                <span style={{fontWeight:700}}>{b.name}</span>
                 {b.accountNo&&<span style={{color:"#2563eb"}}>{b.accountNo}</span>}
                 {b.bankName&&<span style={{color:"#666"}}>{b.bankName}</span>}
                 {b.ifsc&&<span style={{color:"#666"}}>{b.ifsc}</span>}
@@ -3437,23 +3235,121 @@ function SetReportTab({sch,project,updateSchedule,pid}){
             ))}
           </div>
         </div>
-      ):(
-        <div style={{background:"#fff8ec",border:"1px solid #c77d0a33",borderRadius:8,padding:"8px 14px",marginBottom:14,fontSize:12,color:"#c77d0a"}}>
-          ⚠ No bank details configured. Click the ⚙ gear icon (top-right of Schedule tab) to add bank details.
+      )}
+
+      {selectedMod==="daily"&&(
+        <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,fontWeight:700,color:"#666"}}>Show:</span>
+          <button onClick={()=>setSelectedDay("all")} style={{background:selectedDay==="all"?"#222":"#f8f8f8",color:selectedDay==="all"?"#fff":"#333",border:"1px solid "+(selectedDay==="all"?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>All Days</button>
+          {days.map(d=><button key={d} onClick={()=>setSelectedDay(d)} style={{background:selectedDay===d?"#222":"#f8f8f8",color:selectedDay===d?"#fff":"#333",border:"1px solid "+(selectedDay===d?"#222":"#d8d8d8"),borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer"}}>{d}</button>)}
         </div>
       )}
 
-      {/* Report card */}
-      <div className="card" style={{padding:0,overflow:"hidden"}}>
-        <div style={{padding:"9px 14px",background:"#f8f8f8",borderBottom:"1px solid #e0e0e0",display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontWeight:700,fontSize:13,color:"#111111"}}>{selectedModLabel}</span>
-          <span style={{fontSize:11,color:"#999999"}}>— read-only except Pending Billing · OB/Savings = Total − Pending Billing</span>
+      {rows.length===0?(
+        <div style={{textAlign:"center",padding:"48px",color:"#999",fontSize:13,border:"1px dashed #e0e0e0",borderRadius:10}}>No data in this module yet.</div>
+      ):(
+        <div className="card" style={{padding:0,overflow:"hidden"}}>
+          {/* Bulk actions bar */}
+          <div style={{padding:"8px 14px",background:"#f2f2f2",borderBottom:"1px solid #e0e0e0",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="checkbox" onChange={e=>{Object.values(rowRefs.current).forEach(ref=>ref?.setSelected(e.target.checked));setBulkTick(t=>t+1);}} style={{cursor:"pointer",width:14,height:14}}/>
+            <span style={{fontSize:11,color:"#666",fontWeight:600}}>Select All</span>
+            <div style={{width:1,height:16,background:"#d8d8d8",margin:"0 4px"}}/>
+            <button onClick={()=>{Object.values(rowRefs.current).forEach(ref=>{if(ref?.getSelected())ref.setSent(true);});setBulkTick(t=>t+1);}} style={{background:"#222",color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Mark Sent</button>
+            <button onClick={()=>{Object.values(rowRefs.current).forEach(ref=>{if(ref?.getSelected())ref.setSent(false);});setBulkTick(t=>t+1);}} style={{background:"#f8f8f8",color:"#666",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 12px",fontSize:11,cursor:"pointer"}}>✗ Mark Unsent</button>
+          </div>
+          {/* Filter row */}
+          {showFilter&&(
+            <div style={{padding:"6px 14px",background:"#fafafa",borderBottom:"1px solid #e0e0e0",display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              {rows[0]?.cols.map((c,ci)=>(
+                <input key={ci} value={filterVals[c.label]||""} onChange={e=>setFilterVals(p=>({...p,[c.label]:e.target.value}))} placeholder={c.label} style={{background:"#fff",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 8px",fontSize:11,width:90}}/>
+              ))}
+              <button onClick={()=>setFilterVals({})} style={{background:"none",border:"1px solid #d8d8d8",borderRadius:6,padding:"4px 8px",fontSize:11,color:"#dc2626",cursor:"pointer"}}>Clear</button>
+            </div>
+          )}
+          <div style={{overflowX:"auto"}}>
+            <table id="setreport-table" style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{background:"#f8f8f8"}}>
+                  <th style={{padding:"8px 12px",fontWeight:700,color:"#666",fontSize:11,borderBottom:"2px solid #e0e0e0",width:32}}/>
+                  <th style={{padding:"8px 12px",fontWeight:700,color:"#666",fontSize:11,borderBottom:"2px solid #e0e0e0"}}>#</th>
+                  {rows[0].cols.map((c,ci)=>(
+                    <th key={ci} style={{padding:"8px 12px",textAlign:c._isCurrency?"right":"left",fontWeight:700,color:c.label==="Total"?"#222":"#666",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>{c.label}</th>
+                  ))}
+                  <th style={{padding:"8px 12px",textAlign:"right",fontWeight:700,color:"#c77d0a",fontSize:11,borderBottom:"2px solid #e0e0e0",background:"#fffbee",whiteSpace:"nowrap"}}>Pending Billing</th>
+                  <th style={{padding:"8px 12px",textAlign:"right",fontWeight:700,color:"#16a34a",fontSize:11,borderBottom:"2px solid #e0e0e0",background:"#f0fdf4",whiteSpace:"nowrap"}}>OB / Savings</th>
+                  <th style={{padding:"8px 12px",fontWeight:700,color:"#2563eb",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Bank Details</th>
+                  <th style={{padding:"8px 12px",fontWeight:700,color:"#7c3aed",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Mode of Payment</th>
+                  <th style={{padding:"8px 12px",fontWeight:700,color:"#555",fontSize:11,borderBottom:"2px solid #e0e0e0",whiteSpace:"nowrap"}}>Sent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows
+                  .filter(row=>Object.entries(filterVals).every(([label,val])=>!val||String(row.cols.find(c=>c.label===label)?.val||"").toLowerCase().includes(val.toLowerCase())))
+                  .map((row,ri)=>{
+                    const rowTotal=row.cols.find(c=>c.label==="Total")?._total||row.cols.reduce((s,c)=>s+(c._isCurrency?c._total:0),0);
+                    const bank=matchBank(row._name);
+                    return <SetReportRow key={ri} ri={ri} row={row} rowTotal={rowTotal} bank={bank} registerRef={ref=>{rowRefs.current[ri]=ref;}}/>;
+                  })}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div style={{padding:0}}>
-          {selectedMod==="daily"?<DailyReport/>:<GenericReport modId={selectedMod}/>}
-        </div>
-      </div>
+      )}
     </div>
+  );
+}
+
+function SetReportRow({ri,row,rowTotal,bank,registerRef}){
+  const [pending,setPending]=useState("");
+  const [mop,setMop]=useState("");
+  const [sent,setSent]=useState(false);
+  const [selected,setSelected]=useState(false);
+  const ob=rowTotal-(parseFloat(pending)||0);
+  useEffect(()=>{
+    if(registerRef)registerRef({setSent,setSelected,getSent:()=>sent,getSelected:()=>selected});
+  });
+  return(
+    <tr style={{borderBottom:"1px solid #f0f0f0",background:sent?"#f0fdf4":selected?"#f5f5f5":"#fff"}}>
+      <td style={{padding:"6px 12px"}}><input type="checkbox" checked={selected} onChange={e=>setSelected(e.target.checked)} style={{cursor:"pointer",width:14,height:14}}/></td>
+      <td style={{padding:"7px 12px",color:"#999",fontSize:11}}>{ri+1}</td>
+      {row.cols.map((c,ci)=>(
+        <td key={ci} style={{padding:"7px 12px",textAlign:c._isCurrency?"right":"left",color:c.label==="Total"?"#222":c.label==="Day"?"#7c3aed":"#111",fontWeight:c.label==="Total"||c.label==="Item"||c.label==="Day"?700:400,whiteSpace:"nowrap"}}>{c.val}</td>
+      ))}
+      <td style={{padding:"4px 10px",background:"#fffbee"}}>
+        <input
+          type="text"
+          value={pending}
+          onChange={e=>setPending(e.target.value)}
+          style={{width:100,background:"#fff",border:"1px solid #c77d0a",borderRadius:6,padding:"6px 8px",color:"#c77d0a",fontWeight:700,fontSize:13,textAlign:"right",outline:"none",display:"block"}}
+        />
+      </td>
+      <td style={{padding:"7px 12px",textAlign:"right",color:ob<0?"#dc2626":"#16a34a",fontWeight:800,background:"#f0fdf4",whiteSpace:"nowrap",fontSize:13}}>{ob<0?"−"+fmt(Math.abs(ob)):fmt(ob)}</td>
+      <td style={{padding:"7px 12px",fontSize:11}}>
+        {bank?(
+          <div>
+            <div style={{color:"#2563eb",fontWeight:700}}>{bank.accountNo}</div>
+            <div style={{color:"#666",fontSize:10}}>{bank.bankName}{bank.ifsc?" · "+bank.ifsc:""}</div>
+          </div>
+        ):<span style={{color:"#bbb"}}>—</span>}
+      </td>
+      <td style={{padding:"4px 10px"}}>
+        <input
+          type="text"
+          value={mop}
+          onChange={e=>setMop(e.target.value)}
+          placeholder="Cash/NEFT/UPI…"
+          style={{width:110,background:"#fff",border:"1px solid #7c3aed55",borderRadius:6,padding:"5px 8px",color:"#7c3aed",fontWeight:600,fontSize:12,outline:"none",display:"block"}}
+        />
+      </td>
+      <td style={{padding:"6px 12px",textAlign:"center"}}>
+        <div onClick={()=>setSent(s=>!s)} style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",background:sent?"#222":"#f8f8f8",border:"2px solid "+(sent?"#222":"#d8d8d8"),borderRadius:20,padding:"3px 10px",transition:"all .15s"}}>
+          <div style={{width:26,height:14,borderRadius:7,background:sent?"#fff4":"#d8d8d8",position:"relative",flexShrink:0}}>
+            <div style={{width:10,height:10,borderRadius:5,background:sent?"#fff":"#888",position:"absolute",top:2,left:sent?14:2,transition:"left .15s"}}/>
+          </div>
+          <span style={{fontSize:10,fontWeight:700,color:sent?"#fff":"#666"}}>{sent?"Sent":"Draft"}</span>
+        </div>
+      </td>
+    </tr>
   );
 }
 
